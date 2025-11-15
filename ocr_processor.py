@@ -17,22 +17,19 @@ class OCRProcessor:
     
     def _setup_tesseract(self):
         """Setup Tesseract path for different systems"""
-        # Try common Tesseract paths
         tesseract_paths = [
-            '/usr/local/bin/tesseract',  # macOS Homebrew
-            '/usr/bin/tesseract',         # Linux
-            '/opt/homebrew/bin/tesseract', # macOS ARM
-            'C:\\Program Files\\Tesseract-OCR\\tesseract.exe',  # Windows
+            '/usr/local/bin/tesseract',
+            '/usr/bin/tesseract',
+            '/opt/homebrew/bin/tesseract',
+            'C:\\Program Files\\Tesseract-OCR\\tesseract.exe',
             'C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe',
         ]
         
-        # Check environment variable first
         env_path = os.getenv('TESSERACT_PATH')
         if env_path and os.path.exists(env_path):
             pytesseract.pytesseract.tesseract_cmd = env_path
             return
         
-        # Try each path
         for path in tesseract_paths:
             if os.path.exists(path):
                 pytesseract.pytesseract.tesseract_cmd = path
@@ -45,106 +42,101 @@ class OCRProcessor:
             text = pytesseract.image_to_string(image)
             return text
         except pytesseract.TesseractNotFoundError:
-            print("ERROR: Tesseract not found. Please install it:")
-            print("  macOS: brew install tesseract")
-            print("  Ubuntu: sudo apt-get install tesseract-ocr")
-            print("  Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki")
+            print("ERROR: Tesseract not found")
             return None
         except Exception as e:
             print(f"OCR Error: {e}")
             return None
     
     def parse_receipt_with_gpt(self, ocr_text):
-        """Use GPT-4 to extract structured data from OCR text"""
+        """Use GPT-4 to extract ALL items from receipt"""
         try:
-            prompt = f"""You are an expert at parsing receipt data. Extract the following information from this receipt text and return ONLY valid JSON.
+            prompt = f"""You are an expert at parsing receipt data. Extract ALL items from this receipt.
 
 Receipt Text:
 {ocr_text}
 
-Extract these fields:
-- shop_name: The store/shop name (string)
-- date: Date in YYYY-MM-DD format (string)
-- item: The main item or first item purchased (string)
-- mode: Payment method - must be one of: "Cash", "Credit Card", "Debit Card", "E-Wallet", "Other" (string)
-- unit: Number of units purchased (integer, default 1)
-- unit_price: Price per unit in dollars (float, no currency symbol)
-- total_price: Total amount in dollars (float, no currency symbol)
+Return ONLY valid JSON with this structure:
+{{
+    "shop_name": "store name",
+    "date": "YYYY-MM-DD",
+    "payment_mode": "Cash/Credit Card/Debit Card/E-Wallet/Other",
+    "items": [
+        {{"name": "item 1", "quantity": 1, "unit_price": 10.50, "total_price": 10.50}},
+        {{"name": "item 2", "quantity": 2, "unit_price": 5.00, "total_price": 10.00}}
+    ]
+}}
 
-IMPORTANT RULES:
-1. Return ONLY valid JSON, no other text, no markdown, no code blocks
-2. All prices must be numbers without $ or currency symbols
-3. Date must be YYYY-MM-DD format
-4. Mode must be exactly one of the five options above
-5. If you can't find a value, use these defaults:
-   - shop_name: "Unknown Store"
-   - date: today's date
-   - item: "Unknown Item"
-   - mode: "Other"
-   - unit: 1
-   - unit_price: 0.0
-   - total_price: 0.0
-
-Return format:
-{{"shop_name": "Store Name", "date": "2024-01-15", "item": "Product Name", "mode": "Credit Card", "unit": 1, "unit_price": 10.50, "total_price": 10.50}}
+CRITICAL RULES:
+1. Extract ALL items, not just the first one
+2. Each item needs: name, quantity, unit_price, total_price
+3. Return ONLY JSON, no markdown, no code blocks
+4. All prices are numbers without $ symbols
+5. Date in YYYY-MM-DD format
+6. If info missing, use defaults: shop_name="Unknown Store", date=today, payment_mode="Other"
 """
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a receipt data extraction expert. Return only valid JSON with no additional text or formatting."},
+                    {"role": "system", "content": "You are a receipt parser. Return only valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
-                max_tokens=300
+                max_tokens=1000
             )
             
             result = response.choices[0].message.content.strip()
             
-            # Clean up response - remove markdown if present
+            # Clean markdown
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
             elif "```" in result:
                 result = result.split("```")[1].split("```")[0].strip()
             
-            # Remove any leading/trailing whitespace or newlines
             result = result.strip()
+            print(f"GPT Response: {result[:200]}...")
             
-            print(f"GPT Response: {result}")
-            
-            # Parse JSON
             data = json.loads(result)
             
-            # Validate and clean data with strict type checking
-            cleaned_data = {
-                'shop_name': str(data.get('shop_name', 'Unknown Store')) or 'Unknown Store',
-                'date': self._validate_date(data.get('date')),
-                'item': str(data.get('item', 'Unknown Item')) or 'Unknown Item',
-                'mode': self._validate_mode(data.get('mode', 'Other')),
-                'unit': max(1, int(float(data.get('unit', 1) or 1))),
-                'unit_price': abs(float(data.get('unit_price', 0) or 0)),
-                'total_price': abs(float(data.get('total_price', 0) or 0))
-            }
+            # Parse into multiple records (one per item)
+            records = []
+            shop_name = str(data.get('shop_name', 'Unknown Store')) or 'Unknown Store'
+            date = self._validate_date(data.get('date'))
+            payment_mode = self._validate_mode(data.get('payment_mode', 'Other'))
             
-            # If unit_price is 0 but total_price exists, calculate unit_price
-            if cleaned_data['unit_price'] == 0 and cleaned_data['total_price'] > 0:
-                cleaned_data['unit_price'] = cleaned_data['total_price'] / cleaned_data['unit']
+            items = data.get('items', [])
             
-            # If total_price is 0 but unit_price exists, calculate total_price
-            if cleaned_data['total_price'] == 0 and cleaned_data['unit_price'] > 0:
-                cleaned_data['total_price'] = cleaned_data['unit_price'] * cleaned_data['unit']
+            if not items:
+                # Fallback: create single item
+                return [self._get_default_data()]
             
-            print(f"✅ Extracted: {cleaned_data['shop_name']} - {cleaned_data['item']} - ${cleaned_data['total_price']:.2f}")
+            for item in items:
+                record = {
+                    'shop_name': shop_name,
+                    'date': date,
+                    'item': str(item.get('name', 'Unknown Item')) or 'Unknown Item',
+                    'mode': payment_mode,
+                    'unit': max(1, int(float(item.get('quantity', 1) or 1))),
+                    'unit_price': abs(float(item.get('unit_price', 0) or 0)),
+                    'total_price': abs(float(item.get('total_price', 0) or 0))
+                }
+                
+                # Calculate missing prices
+                if record['unit_price'] == 0 and record['total_price'] > 0:
+                    record['unit_price'] = record['total_price'] / record['unit']
+                
+                if record['total_price'] == 0 and record['unit_price'] > 0:
+                    record['total_price'] = record['unit_price'] * record['unit']
+                
+                records.append(record)
             
-            return cleaned_data
+            print(f"✅ Extracted {len(records)} items from {shop_name}")
+            return records
             
-        except json.JSONDecodeError as e:
-            print(f"JSON Parse Error: {e}")
-            print(f"Response was: {result}")
-            return self._get_default_data()
         except Exception as e:
             print(f"GPT Parsing Error: {e}")
-            return self._get_default_data()
+            return [self._get_default_data()]
     
     def _validate_date(self, date_str):
         """Validate and parse date string"""
@@ -152,11 +144,9 @@ Return format:
             return datetime.now()
         
         try:
-            # Try parsing as YYYY-MM-DD
             return datetime.strptime(str(date_str), '%Y-%m-%d')
         except:
             try:
-                # Try other common formats
                 for fmt in ['%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m-%d-%Y']:
                     try:
                         return datetime.strptime(str(date_str), fmt)
@@ -176,20 +166,18 @@ Return format:
         
         mode_str = str(mode_str).strip()
         
-        # Check for exact match (case insensitive)
         for valid_mode in valid_modes:
             if mode_str.lower() == valid_mode.lower():
                 return valid_mode
         
-        # Check for partial matches
         mode_lower = mode_str.lower()
         if 'cash' in mode_lower:
             return 'Cash'
-        elif 'credit' in mode_lower or 'visa' in mode_lower or 'mastercard' in mode_lower or 'amex' in mode_lower:
+        elif 'credit' in mode_lower or 'visa' in mode_lower or 'mastercard' in mode_lower:
             return 'Credit Card'
         elif 'debit' in mode_lower:
             return 'Debit Card'
-        elif 'wallet' in mode_lower or 'paypal' in mode_lower or 'venmo' in mode_lower or 'apple pay' in mode_lower or 'google pay' in mode_lower:
+        elif 'wallet' in mode_lower or 'paypal' in mode_lower or 'apple pay' in mode_lower:
             return 'E-Wallet'
         
         return 'Other'
@@ -207,69 +195,70 @@ Return format:
         }
     
     def process_receipt(self, image_path):
-        """Main processing pipeline"""
+        """Main processing pipeline - returns LIST of records"""
         print(f"Processing: {image_path}")
         
-        # Step 1: OCR
         ocr_text = self.extract_text_from_image(image_path)
         
         if not ocr_text or len(ocr_text.strip()) < 10:
-            print("⚠️ OCR failed or insufficient text extracted, using defaults")
-            return self._get_default_data()
+            print("⚠️ OCR failed or insufficient text")
+            return [self._get_default_data()]
         
         print(f"✅ OCR extracted {len(ocr_text)} characters")
         
-        # Step 2: Parse with GPT
-        structured_data = self.parse_receipt_with_gpt(ocr_text)
-        
-        return structured_data
+        # Returns list of records (one per item)
+        records = self.parse_receipt_with_gpt(ocr_text)
+        return records
 
 
-# Vision API method - more accurate, recommended
 class OCRProcessorVision:
+    """Vision API - More accurate, extracts ALL items"""
+    
     def __init__(self):
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
     def process_receipt(self, image_path):
-        """Process receipt using GPT-4 Vision API"""
+        """Process receipt using GPT-4 Vision - returns LIST of records"""
         print(f"Processing with Vision API: {image_path}")
         
         try:
-            # Encode image to base64
             with open(image_path, "rb") as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
             
-            prompt = """Analyze this receipt image and extract the following information.
+            prompt = """Analyze this receipt image and extract ALL items purchased.
 
-You must return ONLY valid JSON with these exact fields:
+Return ONLY valid JSON in this exact format:
 {
-    "shop_name": "name of store/shop",
-    "date": "YYYY-MM-DD format",
-    "item": "main item or first item listed",
-    "mode": "must be exactly one of: Cash, Credit Card, Debit Card, E-Wallet, or Other",
-    "unit": integer number of units,
-    "unit_price": float price per unit (no $ symbol),
-    "total_price": float total amount (no $ symbol)
+    "shop_name": "store name",
+    "date": "YYYY-MM-DD",
+    "payment_mode": "Cash/Credit Card/Debit Card/E-Wallet/Other",
+    "items": [
+        {"name": "item 1 name", "quantity": 1, "unit_price": 10.50, "total_price": 10.50},
+        {"name": "item 2 name", "quantity": 2, "unit_price": 5.00, "total_price": 10.00}
+    ]
 }
 
 CRITICAL RULES:
-1. Return ONLY the JSON object, no other text
-2. No markdown formatting, no code blocks, no ```json
-3. All prices must be numbers without currency symbols
-4. Date must be YYYY-MM-DD format
-5. Mode must be exactly: "Cash", "Credit Card", "Debit Card", "E-Wallet", or "Other"
-6. If you see multiple items, pick the main/first item
-7. If info is unclear, use these defaults:
-   - shop_name: "Unknown Store"
-   - date: "2024-01-01"
-   - item: "Purchase"
-   - mode: "Other"
-   - unit: 1
-   - unit_price: 0.0
-   - total_price: 0.0
+1. Extract ALL items from the receipt, not just one
+2. Each item must have: name, quantity, unit_price, total_price
+3. Return ONLY the JSON object - no markdown, no code blocks, no ```json
+4. All prices are numbers without $ or currency symbols
+5. Date in YYYY-MM-DD format
+6. Payment mode must be exactly one of: Cash, Credit Card, Debit Card, E-Wallet, Other
+7. If multiple items with same name, keep them separate with quantities
+8. Calculate unit_price = total_price / quantity if needed
 
-Example valid response:
-{"shop_name": "Walmart", "date": "2024-01-15", "item": "Office Supplies", "mode": "Credit Card", "unit": 1, "unit_price": 45.99, "total_price": 45.99}
+Example for 3 items:
+{
+  "shop_name": "Walmart",
+  "date": "2024-01-15",
+  "payment_mode": "Credit Card",
+  "items": [
+    {"name": "Apple", "quantity": 3, "unit_price": 1.50, "total_price": 4.50},
+    {"name": "Bread", "quantity": 1, "unit_price": 3.99, "total_price": 3.99},
+    {"name": "Milk", "quantity": 2, "unit_price": 4.50, "total_price": 9.00}
+  ]
+}
 """
             
             response = self.client.chat.completions.create(
@@ -289,57 +278,73 @@ Example valid response:
                         ]
                     }
                 ],
-                max_tokens=500,
+                max_tokens=1500,
                 temperature=0.1
             )
             
             result = response.choices[0].message.content.strip()
             
-            # Clean and parse JSON
+            # Clean markdown
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
             elif "```" in result:
                 result = result.split("```")[1].split("```")[0].strip()
             
-            # Remove any leading/trailing whitespace
             result = result.strip()
+            print(f"Vision API Response: {result[:300]}...")
             
-            print(f"Vision API Response: {result}")
-            
-            # Parse JSON
             data = json.loads(result)
             
-            # Clean and validate with strict types
-            cleaned_data = {
-                'shop_name': str(data.get('shop_name', 'Unknown Store')) or 'Unknown Store',
-                'date': self._validate_date(data.get('date', '2024-01-01')),
-                'item': str(data.get('item', 'Purchase')) or 'Purchase',
-                'mode': self._validate_mode(data.get('mode', 'Other')),
-                'unit': max(1, int(float(data.get('unit', 1) or 1))),
-                'unit_price': abs(float(data.get('unit_price', 0) or 0)),
-                'total_price': abs(float(data.get('total_price', 0) or 0))
-            }
+            # Parse into multiple records (one per item)
+            records = []
+            shop_name = str(data.get('shop_name', 'Unknown Store')) or 'Unknown Store'
+            date = self._validate_date(data.get('date'))
+            payment_mode = self._validate_mode(data.get('payment_mode', 'Other'))
             
-            # Calculate missing prices
-            if cleaned_data['unit_price'] == 0 and cleaned_data['total_price'] > 0:
-                cleaned_data['unit_price'] = cleaned_data['total_price'] / cleaned_data['unit']
+            items = data.get('items', [])
             
-            if cleaned_data['total_price'] == 0 and cleaned_data['unit_price'] > 0:
-                cleaned_data['total_price'] = cleaned_data['unit_price'] * cleaned_data['unit']
+            if not items:
+                print("⚠️ No items found, creating default")
+                return [self._get_default_data()]
             
-            print(f"✅ Extracted: {cleaned_data['shop_name']} - {cleaned_data['item']} - ${cleaned_data['total_price']:.2f}")
+            for item in items:
+                item_name = str(item.get('name', 'Unknown Item')) or 'Unknown Item'
+                quantity = max(1, int(float(item.get('quantity', 1) or 1)))
+                unit_price = abs(float(item.get('unit_price', 0) or 0))
+                total_price = abs(float(item.get('total_price', 0) or 0))
+                
+                # Calculate missing prices
+                if unit_price == 0 and total_price > 0:
+                    unit_price = total_price / quantity
+                
+                if total_price == 0 and unit_price > 0:
+                    total_price = unit_price * quantity
+                
+                record = {
+                    'shop_name': shop_name,
+                    'date': date,
+                    'item': item_name,
+                    'mode': payment_mode,
+                    'unit': quantity,
+                    'unit_price': unit_price,
+                    'total_price': total_price
+                }
+                
+                records.append(record)
+                print(f"  → {item_name} x{quantity} = ${total_price:.2f}")
             
-            return cleaned_data
+            print(f"✅ Extracted {len(records)} items from {shop_name}")
+            return records
             
         except json.JSONDecodeError as e:
             print(f"❌ JSON Parse Error: {e}")
-            print(f"Response was: {result}")
-            return self._get_default_data()
+            print(f"Response was: {result[:500]}")
+            return [self._get_default_data()]
         except Exception as e:
             print(f"❌ Vision API Error: {e}")
             import traceback
             traceback.print_exc()
-            return self._get_default_data()
+            return [self._get_default_data()]
     
     def _validate_date(self, date_str):
         """Validate and parse date string"""
@@ -350,7 +355,7 @@ Example valid response:
             return datetime.strptime(str(date_str), '%Y-%m-%d')
         except:
             try:
-                for fmt in ['%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m-%d-%Y']:
+                for fmt in ['%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']:
                     try:
                         return datetime.strptime(str(date_str), fmt)
                     except:
@@ -369,20 +374,18 @@ Example valid response:
         
         mode_str = str(mode_str).strip()
         
-        # Check for exact match
         for valid_mode in valid_modes:
             if mode_str.lower() == valid_mode.lower():
                 return valid_mode
         
-        # Check for partial matches
         mode_lower = mode_str.lower()
         if 'cash' in mode_lower:
             return 'Cash'
-        elif 'credit' in mode_lower or 'visa' in mode_lower or 'mastercard' in mode_lower or 'amex' in mode_lower:
+        elif 'credit' in mode_lower or 'visa' in mode_lower or 'mastercard' in mode_lower:
             return 'Credit Card'
         elif 'debit' in mode_lower:
             return 'Debit Card'
-        elif 'wallet' in mode_lower or 'paypal' in mode_lower or 'venmo' in mode_lower or 'apple pay' in mode_lower or 'google pay' in mode_lower:
+        elif 'wallet' in mode_lower or 'paypal' in mode_lower or 'apple pay' in mode_lower:
             return 'E-Wallet'
         
         return 'Other'
@@ -392,7 +395,7 @@ Example valid response:
         return {
             'shop_name': 'Unknown Store',
             'date': datetime.now(),
-            'item': 'Purchase',
+            'item': 'Unknown Item',
             'mode': 'Other',
             'unit': 1,
             'unit_price': 0.0,
