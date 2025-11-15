@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
-from ocr_processor import OCRProcessor
+from ocr_processor import OCRProcessorVision as OCRProcessor
 from rag_chatbot import RAGChatbot
 from analytics import ReceiptAnalytics
 
@@ -80,56 +80,112 @@ if page == "Upload Receipt":
     with col2:
         st.subheader("Step 2: Verify & Save")
         
-        if 'extracted_data' in st.session_state:
-            data = st.session_state.extracted_data
+        if 'extracted_items' in st.session_state:
+            items_list = st.session_state.extracted_items
             
-            # Editable fields
-            shop_name = st.text_input("Shop Name", value=data.get('shop_name', ''))
-            date_purchase = st.date_input("Date of Purchase", value=pd.to_datetime(data.get('date', datetime.now())))
-            item = st.text_input("Item Purchased", value=data.get('item', ''))
-            mode = st.selectbox("Mode of Purchase", ['Cash', 'Credit Card', 'Debit Card', 'E-Wallet', 'Other'], 
-                               index=0 if not data.get('mode') else ['Cash', 'Credit Card', 'Debit Card', 'E-Wallet', 'Other'].index(data.get('mode', 'Cash')))
-            unit = st.number_input("Unit Purchased", min_value=1, value=int(data.get('unit', 1)))
-            unit_price = st.number_input("Unit Price ($)", min_value=0.0, value=float(data.get('unit_price', 0.0)), format="%.2f")
-            total_price = st.number_input("Total Price ($)", min_value=0.0, value=float(data.get('total_price', 0.0)), format="%.2f")
+            st.info(f"📋 Found {len(items_list)} item(s) on this receipt")
             
-            col_a, col_b = st.columns(2)
+            # Common receipt info (outside form)
+            st.markdown("**Receipt Information:**")
+            shop_name = st.text_input("Shop Name", value=items_list[0].get('shop_name', ''), key="shop_name_input")
             
-            with col_a:
-                if st.button("💾 Save to Database", type="primary", use_container_width=True):
-                    # Create record
-                    record = {
-                        'Shop Name': shop_name,
-                        'Date of Purchase': date_purchase.strftime('%Y-%m-%d'),
-                        'Item Purchased': item,
-                        'Mode of Purchase': mode,
-                        'Unit Purchased': unit,
-                        'Unit Price': unit_price,
-                        'Total Price': total_price,
-                        'Image Path': st.session_state.image_path
-                    }
+            col_date, col_mode = st.columns(2)
+            with col_date:
+                date_purchase = st.date_input("Date of Purchase", value=pd.to_datetime(items_list[0].get('date', datetime.now())), key="date_input")
+            with col_mode:
+                mode = st.selectbox("Mode of Purchase", ['Cash', 'Credit Card', 'Debit Card', 'E-Wallet', 'Other'], 
+                                   index=['Cash', 'Credit Card', 'Debit Card', 'E-Wallet', 'Other'].index(items_list[0].get('mode', 'Other')),
+                                   key="mode_input")
+            
+            st.markdown("---")
+            st.markdown("**Items on Receipt:**")
+            st.markdown("*Edit any field if needed*")
+            
+            # Create editable dataframe
+            items_df_data = []
+            for idx, item_data in enumerate(items_list):
+                items_df_data.append({
+                    'Item Name': item_data.get('item', ''),
+                    'Quantity': int(item_data.get('unit', 1)),
+                    'Unit Price': float(item_data.get('unit_price', 0.0)),
+                    'Total Price': float(item_data.get('total_price', 0.0))
+                })
+            
+            # Use data editor for easy editing
+            edited_df = st.data_editor(
+                pd.DataFrame(items_df_data),
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Item Name": st.column_config.TextColumn("Item Name", required=True, width="medium"),
+                    "Quantity": st.column_config.NumberColumn("Qty", min_value=1, step=1, format="%d", width="small"),
+                    "Unit Price": st.column_config.NumberColumn("Unit Price ($)", min_value=0.0, step=0.01, format="%.2f", width="small"),
+                    "Total Price": st.column_config.NumberColumn("Total ($)", min_value=0.0, step=0.01, format="%.2f", width="small"),
+                }
+            )
+            
+            # Calculate and show grand total
+            grand_total = edited_df['Total Price'].sum()
+            st.markdown(f"### Grand Total: ${grand_total:.2f}")
+            
+            st.markdown("---")
+            
+            # Save and reset buttons
+            col_save, col_reset = st.columns(2)
+            
+            with col_save:
+                if st.button("💾 Save All Items", type="primary", use_container_width=True, key="save_button"):
+                    # Create records from edited dataframe
+                    all_records = []
+                    
+                    for idx, row in edited_df.iterrows():
+                        record = {
+                            'Shop Name': shop_name,
+                            'Date of Purchase': date_purchase.strftime('%Y-%m-%d'),
+                            'Item Purchased': row['Item Name'],
+                            'Mode of Purchase': mode,
+                            'Unit Purchased': int(row['Quantity']),
+                            'Unit Price': float(row['Unit Price']),
+                            'Total Price': float(row['Total Price']),
+                            'Image Path': st.session_state.image_path
+                        }
+                        all_records.append(record)
                     
                     # Save to CSV
                     csv_path = "data/receipts.csv"
-                    if os.path.exists(csv_path):
-                        df = pd.read_csv(csv_path)
-                        df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
-                    else:
-                        df = pd.DataFrame([record])
+                    new_df = pd.DataFrame(all_records)
                     
-                    df.to_csv(csv_path, index=False)
+                    if os.path.exists(csv_path):
+                        existing_df = pd.read_csv(csv_path)
+                        final_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    else:
+                        final_df = new_df
+                    
+                    final_df.to_csv(csv_path, index=False)
                     
                     # Add to RAG database
-                    rag_chatbot.add_receipt(record)
+                    for record in all_records:
+                        rag_chatbot.add_receipt(record)
                     
-                    st.success("✅ Receipt saved successfully!")
-                    del st.session_state.extracted_data
+                    st.success(f"✅ Saved {len(all_records)} items successfully! Total: ${grand_total:.2f}")
+                    
+                    # Show saved items
+                    with st.expander("📋 View Saved Items"):
+                        display_df = new_df.drop(columns=['Image Path'], errors='ignore')
+                        st.dataframe(display_df, use_container_width=True)
+                    
+                    st.balloons()
+                    
+                    # Clear session state
+                    del st.session_state.extracted_items
                     del st.session_state.image_path
-                    st.rerun()
+                    
+                    st.info("✨ You can now upload another receipt or go to Query/Analytics pages")
             
-            with col_b:
-                if st.button("🔄 Reset", use_container_width=True):
-                    del st.session_state.extracted_data
+            with col_reset:
+                if st.button("🔄 Reset", use_container_width=True, key="reset_button"):
+                    del st.session_state.extracted_items
                     del st.session_state.image_path
                     st.rerun()
 
@@ -166,7 +222,7 @@ elif page == "Query Records":
                 
                 if response.get('relevant_receipts') is not None and len(response['relevant_receipts']) > 0:
                     st.subheader("🧾 Relevant Receipts")
-                    st.dataframe(response['relevant_receipts'], use_container_width=True)
+                    st.dataframe(response['relevant_receipts'].drop(columns=['Image Path'], errors='ignore'), use_container_width=True)
         elif not query:
             st.warning("Please enter a question.")
         else:
@@ -242,7 +298,4 @@ elif page == "Analytics Dashboard":
             )
     else:
         st.warning("⚠️ No receipts in database yet. Please upload some receipts first.")
-
         st.info("Upload receipts to see analytics and trends.")
-
-
