@@ -59,18 +59,22 @@ if page == "Upload Receipt":
                     progress_placeholder = st.empty()
                     progress_placeholder.info("🔍 Analyzing receipt image...")
 
-                    # Process with OCR
-                    extracted_data = ocr_processor.process_receipt(filename)
+                    # Process with OCR - now returns LIST of items
+                    extracted_items = ocr_processor.process_receipt(filename)
                     
                     progress_placeholder.empty()
 
-                    if extracted_data and extracted_data.get('shop_name') != 'Unknown Store':
-                        st.session_state.extracted_data = extracted_data
+                   if extracted_items and len(extracted_items) > 0:
+                        st.session_state.extracted_items = extracted_items
                         st.session_state.image_path = filename
-                        st.success(f"✅ Receipt processed! Found: {extracted_data.get('shop_name')} - ${extracted_data.get('total_price', 0):.2f}")
+                        
+                        shop_name = extracted_items[0].get('shop_name', 'Unknown')
+                        total = sum(item.get('total_price', 0) for item in extracted_items)
+                        
+                        st.success(f"✅ Receipt processed! Found {len(extracted_items)} item(s) from {shop_name} - Total: ${total:.2f}")
                     else:
-                        st.warning("⚠️ Could not extract all information. Please fill in the details manually.")
-                        st.session_state.extracted_data = extracted_data or ocr_processor._get_default_data()
+                        st.warning("⚠️ Could not extract information. Please fill in manually.")
+                        st.session_state.extracted_items = [ocr_processor._get_default_data()]
                         st.session_state.image_path = filename
     
     with col2:
@@ -238,4 +242,5 @@ elif page == "Analytics Dashboard":
             )
     else:
         st.warning("⚠️ No receipts in database yet. Please upload some receipts first.")
+
         st.info("Upload receipts to see analytics and trends.")
