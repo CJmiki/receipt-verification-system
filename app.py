@@ -47,7 +47,7 @@ if page == "Upload Receipt":
             st.image(uploaded_file, caption="Uploaded Receipt", use_column_width=True)
             
             if st.button("🔍 Process Receipt", type="primary"):
-                with st.spinner("Processing receipt..."):
+                with st.spinner("Processing receipt with AI..."):
                     # Save uploaded file
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"data/uploads/receipt_{timestamp}.jpg"
@@ -55,15 +55,15 @@ if page == "Upload Receipt":
                     with open(filename, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     
-                     # Show progress
+                    # Show progress
                     progress_placeholder = st.empty()
                     progress_placeholder.info("🔍 Analyzing receipt image...")
-
+                    
                     # Process with OCR - now returns LIST of items
                     extracted_items = ocr_processor.process_receipt(filename)
                     
                     progress_placeholder.empty()
-
+                    
                     if extracted_items and len(extracted_items) > 0:
                         st.session_state.extracted_items = extracted_items
                         st.session_state.image_path = filename
@@ -244,4 +244,5 @@ elif page == "Analytics Dashboard":
         st.warning("⚠️ No receipts in database yet. Please upload some receipts first.")
 
         st.info("Upload receipts to see analytics and trends.")
+
 
