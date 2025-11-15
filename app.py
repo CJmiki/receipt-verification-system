@@ -64,7 +64,7 @@ if page == "Upload Receipt":
                     
                     progress_placeholder.empty()
 
-                   if extracted_items and len(extracted_items) > 0:
+                    if extracted_items and len(extracted_items) > 0:
                         st.session_state.extracted_items = extracted_items
                         st.session_state.image_path = filename
                         
@@ -244,3 +244,4 @@ elif page == "Analytics Dashboard":
         st.warning("⚠️ No receipts in database yet. Please upload some receipts first.")
 
         st.info("Upload receipts to see analytics and trends.")
+
