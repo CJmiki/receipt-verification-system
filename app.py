@@ -415,7 +415,7 @@ elif page == "Query Records":
     
     st.markdown("""
     Ask questions about your receipt history:
-    - *"Show me all purchases from Walmart"*
+    - *"Show me all purchases from NTUC"*
     - *"What did I buy last month?"*
     - *"Total spending on office supplies?"*
     - *"Find receipts above $100"*
@@ -653,3 +653,4 @@ elif page == "Manage Receipts":
                             st.error("❌ Failed to delete")
     else:
         st.info("No receipts to manage yet.")
+
