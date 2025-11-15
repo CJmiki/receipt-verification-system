@@ -1,0 +1,10 @@
+streamlit
+openai
+python-dotenv
+pandas
+pillow
+pytesseract
+chromadb
+plotly
+langchain
+langchain-openai
