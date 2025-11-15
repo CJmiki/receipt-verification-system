@@ -112,22 +112,31 @@ CRITICAL RULES:
                 return [self._get_default_data()]
             
             for item in items:
+                quantity = max(1, int(float(item.get('quantity', 1) or 1)))
+                unit_price = abs(float(item.get('unit_price', 0) or 0))
+                total_price = abs(float(item.get('total_price', 0) or 0))
+                
+                # Calculate missing prices correctly
+                if unit_price == 0 and total_price > 0:
+                    unit_price = total_price / quantity
+                elif total_price == 0 and unit_price > 0:
+                    total_price = unit_price * quantity
+                elif unit_price > 0 and total_price > 0:
+                    # Verify the math is correct
+                    expected_total = unit_price * quantity
+                    if abs(expected_total - total_price) > 0.01:
+                        # Use unit_price * quantity as the source of truth
+                        total_price = expected_total
+                
                 record = {
                     'shop_name': shop_name,
                     'date': date,
                     'item': str(item.get('name', 'Unknown Item')) or 'Unknown Item',
                     'mode': payment_mode,
-                    'unit': max(1, int(float(item.get('quantity', 1) or 1))),
-                    'unit_price': abs(float(item.get('unit_price', 0) or 0)),
-                    'total_price': abs(float(item.get('total_price', 0) or 0))
+                    'unit': quantity,
+                    'unit_price': round(unit_price, 2),
+                    'total_price': round(total_price, 2)
                 }
-                
-                # Calculate missing prices
-                if record['unit_price'] == 0 and record['total_price'] > 0:
-                    record['unit_price'] = record['total_price'] / record['unit']
-                
-                if record['total_price'] == 0 and record['unit_price'] > 0:
-                    record['total_price'] = record['unit_price'] * record['unit']
                 
                 records.append(record)
             
