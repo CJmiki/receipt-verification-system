@@ -71,63 +71,80 @@ class OCRProcessor:
                 print("⚠️ Insufficient text extracted from image")
                 return None  # Return None to indicate invalid image
             
-            # Check for receipt-like content
+            # Check for receipt-like content - VERY lenient now
             receipt_keywords = ['total', 'price', 'item', 'qty', 'quantity', 'amount', 
                               'store', 'shop', 'receipt', 'purchased', 'date', '$', 
-                              'card', 'cash', 'paid', 'rm', 'sgd', 'usd', 'tax', 'subtotal',
-                              'change', 'payment', 'bill', 'invoice', 'merchant', 'tender']
+                              'card', 'cash', 'paid', 'rm', 'sgd', 'usd', 'eur', 'gbp',
+                              'tax', 'subtotal', 'change', 'payment', 'bill', 'invoice', 
+                              'merchant', 'tender', 'sale', 'transaction', 'purchase',
+                              '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',  # Numbers
+                              '.', ',', ':', '-', 'x', '@', '#']  # Common receipt symbols
             text_lower = ocr_text.lower()
             
             # Count how many receipt keywords are present
             keyword_count = sum(1 for keyword in receipt_keywords if keyword in text_lower)
             
-            # Require at least 2 receipt keywords to proceed
-            if keyword_count < 2:
-                print(f"⚠️ Only {keyword_count} receipt keyword(s) found - doesn't look like a receipt")
-                return None  # Not a receipt image
+            # Very lenient - just check if there's ANY text that might be a receipt
+            # Only reject if there are almost no keywords at all
+            if keyword_count < 1:
+                print(f"⚠️ No receipt-like content found")
+                return None  # Definitely not a receipt
+            
+            # If we have at least 1 keyword, let GPT decide
             
             prompt = f"""You are an expert at identifying and parsing receipt data from OCR text.
 
-FIRST: Determine if this is actually a receipt/invoice/bill. Receipts contain:
-- Store/merchant names
-- Purchased items with prices
-- Payment information (total, subtotal, tax, etc.)
-- Dates and transaction details
+Your task: Determine if this is a receipt/invoice/bill AND extract the data.
 
 Receipt Text:
 {ocr_text}
 
-CRITICAL: If this text does NOT look like a receipt (e.g., it's a photo of random text, a document, a sign, etc.), return ONLY:
+IMPORTANT INSTRUCTIONS:
+1. Be VERY LENIENT in identifying receipts. Consider it a receipt if it has:
+   - ANY mention of prices or amounts (even just numbers)
+   - ANY store/business names or hints
+   - ANY items or products listed
+   - Even partial/blurry receipt information
+
+2. ONLY reject if it's clearly NOT a receipt, such as:
+   - Personal letters or emails
+   - Book pages or articles
+   - Random street signs
+   - Photos with no transaction information at all
+
+3. If you're unsure, ASSUME it's a receipt and try to extract data.
+
+If this is clearly NOT a receipt, return:
 {{"is_receipt": false, "reason": "brief explanation"}}
 
-If this IS a receipt (even if blurry or poorly formatted), extract as much data as you can and return:
+If this IS or MIGHT BE a receipt (even if very unclear), extract whatever you can:
 {{
     "is_receipt": true,
-    "shop_name": "store name (or 'Unknown Store' if not found)",
-    "date": "YYYY-MM-DD (or today's date if not found)",
+    "shop_name": "store name or 'Unknown Store'",
+    "date": "YYYY-MM-DD or today's date",
     "payment_mode": "Cash/Credit Card/Debit Card/E-Wallet/Other",
     "items": [
-        {{"name": "item name", "quantity": 1, "unit_price": 10.50, "total_price": 10.50}},
-        {{"name": "another item", "quantity": 2, "unit_price": 5.00, "total_price": 10.00}}
+        {{"name": "item name or generic 'Item 1'", "quantity": 1, "unit_price": 10.50, "total_price": 10.50}}
     ]
 }}
 
-RULES:
-1. Be strict about identifying receipts - reject non-receipt images
-2. For actual receipts, be lenient - extract whatever you can even if blurry
-3. If only prices visible, create generic item names like "Item 1", "Item 2"
-4. Return ONLY JSON - no markdown, no code blocks
-5. Quantities can have up to 3 decimal places (e.g., 2.500 kg)
-6. Unit prices can be negative for discounts
+EXTRACTION RULES:
+- Extract ALL items you can find
+- If only prices visible (no item names), create generic items: "Item 1", "Item 2", etc.
+- If only total visible, create one item with that total
+- Quantities can have 3 decimals (e.g., 2.500 kg)
+- Prices can be negative (discounts)
+- Return ONLY JSON, no markdown or explanations
+- When in doubt, TRY TO EXTRACT rather than reject
 """
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a receipt validation and extraction expert. First verify if the text is from a receipt/invoice/bill. Reject non-receipt images strictly. For actual receipts, extract data even if blurry or poorly formatted."},
+                    {"role": "system", "content": "You are a lenient receipt validator. Assume images are receipts unless clearly not (like letters, books, signs). For receipts, extract any data you can find, even if partial or unclear. When in doubt, try to extract rather than reject."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
+                temperature=0.4,  # Higher for more flexible interpretation
                 max_tokens=1500
             )
             
@@ -283,27 +300,29 @@ RULES:
     def process_receipt(self, image_path):
         """
         Main processing pipeline using Tesseract OCR (FREE!)
-        More lenient version that handles blurry/poorly formatted receipts
-        BUT still rejects non-receipt images
+        VERY lenient version - accepts most images that might be receipts
+        Only rejects obvious non-receipts (letters, books, signs)
         
-        Returns: List of records (one per item), or None if not a receipt
+        Returns: List of records (one per item), or None if clearly not a receipt
         """
         print(f"🔍 Processing with Tesseract OCR: {image_path}")
         
         # Step 1: Extract text using Tesseract (FREE!)
         ocr_text = self.extract_text_from_image(image_path)
         
-        if not ocr_text or len(ocr_text.strip()) < 5:
-            print("⚠️ OCR failed or very minimal text extracted")
-            return None  # Can't determine if it's a receipt
+        if not ocr_text or len(ocr_text.strip()) < 3:
+            print("⚠️ OCR failed or almost no text extracted")
+            # Even with minimal text, try to process - might be very faded receipt
+            # Return default data for manual entry
+            return [self._get_default_data()]
         
         print(f"✅ Tesseract extracted {len(ocr_text)} characters")
         print(f"📄 Preview: {ocr_text[:200]}...")
         
-        # Step 2: Parse text with GPT-4o-mini (validates + extracts)
+        # Step 2: Parse text with GPT-4o-mini (very lenient validation + extraction)
         records = self.parse_receipt_with_gpt(ocr_text)
         
-        # None means it's not a receipt or failed validation
+        # None means GPT determined it's clearly NOT a receipt
         if records is None:
             return None
         
