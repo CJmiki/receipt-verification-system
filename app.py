@@ -211,20 +211,38 @@ if page == "Upload Receipt":
                     progress_placeholder = st.empty()
                     progress_placeholder.info("🔍 Analyzing receipt image...")
                     
-                    # Process with OCR - returns LIST of items
+                    # Process with OCR - returns LIST of items or None if not a receipt
                     extracted_items = ocr_processor.process_receipt(filename)
                     
                     progress_placeholder.empty()
+                    
+                    # Check if it's not a valid receipt
+                    if extracted_items is None:
+                        st.error("❌ This doesn't appear to be a receipt image")
+                        st.warning("Please upload an image of a receipt, invoice, or bill. The image should contain:")
+                        st.markdown("""
+                        - Store or merchant name
+                        - Purchased items with prices
+                        - Payment information (total, tax, etc.)
+                        - Transaction date
+                        """)
+                        st.info("💡 If this is a receipt but wasn't recognized, try taking a clearer photo with better lighting.")
+                        st.stop()
                     
                     # Check if extraction was successful
                     if extracted_items and len(extracted_items) > 0:
                         first_item = extracted_items[0]
                         
-                        # Check if data is actually extracted (not default)
-                        if (first_item.get('shop_name') == 'Unknown Store' and 
+                        # Check if data is actually extracted (not completely default)
+                        # More lenient check - accept partial data
+                        is_completely_empty = (
+                            first_item.get('shop_name') == 'Unknown Store' and 
                             first_item.get('item') == 'Unknown Item' and 
-                            first_item.get('total_price') == 0.0):
-                            
+                            first_item.get('total_price') == 0.0 and
+                            len(extracted_items) == 1
+                        )
+                        
+                        if is_completely_empty:
                             st.error("❌ Unable to extract receipt data")
                             st.warning("The image quality may be too poor or the receipt format is not recognized. Please try:")
                             st.markdown("""
@@ -238,8 +256,8 @@ if page == "Upload Receipt":
                             st.session_state.extracted_items = [ocr_processor._get_default_data()]
                             st.session_state.image_path = filename
                             st.session_state.file_hash = file_hash
-                            
                         else:
+                            # Accept partial extraction!
                             st.session_state.extracted_items = extracted_items
                             st.session_state.image_path = filename
                             st.session_state.file_hash = file_hash
@@ -247,7 +265,15 @@ if page == "Upload Receipt":
                             shop_name = extracted_items[0].get('shop_name', 'Unknown')
                             total = sum(item.get('total_price', 0) for item in extracted_items)
                             
-                            st.success(f"✅ Receipt processed! Found {len(extracted_items)} item(s) from {shop_name} - Total: ${total:.2f}")
+                            # Check if extraction is partial
+                            has_unknowns = (shop_name == 'Unknown Store' or 
+                                          any(item.get('item') == 'Unknown Item' for item in extracted_items))
+                            
+                            if has_unknowns:
+                                st.warning(f"⚠️ Partial extraction successful! Found {len(extracted_items)} item(s)")
+                                st.info("💡 Some fields may be incomplete. Please verify and edit the data below before saving.")
+                            else:
+                                st.success(f"✅ Receipt processed! Found {len(extracted_items)} item(s) from {shop_name} - Total: ${total:.2f}")
                     else:
                         st.error("❌ Failed to process receipt")
                         st.warning("Please try again with a clearer image or manually enter the data.")
@@ -653,4 +679,3 @@ elif page == "Manage Receipts":
                             st.error("❌ Failed to delete")
     else:
         st.info("No receipts to manage yet.")
-
