@@ -7,8 +7,64 @@ from ocr_processor import OCRProcessor  # Tesseract OCR - FREE!
 from rag_chatbot import RAGChatbot
 from analytics import ReceiptAnalytics
 
-# Page config
-st.set_page_config(page_title="Receipt Verification System", layout="wide")
+# region <--------- Streamlit Page Configuration --------->
+st.set_page_config(
+    page_title="Receipt Verification System", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+# endregion <--------- Streamlit Page Configuration --------->
+
+# region <--------- Password Protection --------->
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets.get("password", "admin123"):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the password is validated
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show input for password
+    st.title("🔐 Receipt Verification System")
+    st.markdown("### Password Required")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.text_input(
+            "Enter Password", 
+            type="password", 
+            on_change=password_entered, 
+            key="password",
+            placeholder="Enter system password"
+        )
+        
+        if st.session_state.get("password_correct", None) == False:
+            st.error("😕 Incorrect password")
+        
+        st.info("💡 **Default password**: admin123 (or set in .streamlit/secrets.toml)")
+        
+        with st.expander("ℹ️ How to set a custom password"):
+            st.markdown("""
+            Create a file `.streamlit/secrets.toml` with:
+            ```toml
+            password = "your_secure_password_here"
+            ```
+            """)
+
+    return False
+
+# Do not continue if check_password is not True
+if not check_password():
+    st.stop()
+# endregion <--------- Password Protection --------->
 
 # Initialize components
 @st.cache_resource
@@ -23,69 +79,6 @@ ocr_processor, rag_chatbot, receipt_analytics = init_components()
 # Create necessary directories
 os.makedirs("data/uploads", exist_ok=True)
 os.makedirs("data/hashes", exist_ok=True)
-
-# ==================== AUTHENTICATION ====================
-
-def check_password():
-    """Returns `True` if user is authenticated."""
-    
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        username = st.session_state["username"]
-        password = st.session_state["password"]
-        
-        # Simple authentication (in production, use proper auth)
-        users = {
-            "admin": {"password": "admin123", "role": "admin"},
-            "user": {"password": "user123", "role": "user"}
-        }
-        
-        if username in users and password == users[username]["password"]:
-            st.session_state["authenticated"] = True
-            st.session_state["role"] = users[username]["role"]
-            st.session_state["username_logged"] = username
-            del st.session_state["password"]  # Don't store password
-        else:
-            st.session_state["authenticated"] = False
-    
-    # First run, show login screen
-    if "authenticated" not in st.session_state:
-        st.title("🔐 Receipt Verification System")
-        st.markdown("### Please Login")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col2:
-            st.text_input("Username", key="username", placeholder="admin or user")
-            st.text_input("Password", type="password", key="password", placeholder="Enter password")
-            st.button("Login", on_click=password_entered, type="primary", use_container_width=True)
-            
-            with st.expander("ℹ️ Demo Credentials"):
-                st.markdown("""
-                **Admin Account:**
-                - Username: `admin`
-                - Password: `admin123`
-                - Access: Upload, Query, Analytics, Delete
-                
-                **User Account:**
-                - Username: `user`
-                - Password: `user123`
-                - Access: Upload, Query only
-                """)
-        
-        return False
-    
-    # Authentication failed
-    if not st.session_state.get("authenticated", False):
-        st.error("😕 Username or password incorrect")
-        st.button("Try again", on_click=lambda: st.session_state.clear())
-        return False
-    
-    # Authentication successful
-    return True
-
-if not check_password():
-    st.stop()
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -133,18 +126,12 @@ def delete_receipt_by_image(image_path):
 
 # ==================== HEADER ====================
 
-# Show role and logout
-col_header1, col_header2, col_header3 = st.columns([2, 1, 1])
+col_header1, col_header2 = st.columns([3, 1])
 
 with col_header1:
     st.title("📋 Receipt Verification System")
 
 with col_header2:
-    role_emoji = "👑" if st.session_state["role"] == "admin" else "👤"
-    st.markdown(f"### {role_emoji} {st.session_state['username_logged'].title()}")
-    st.caption(f"Role: {st.session_state['role'].title()}")
-
-with col_header3:
     st.write("")  # Spacing
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.clear()
@@ -155,11 +142,13 @@ with col_header3:
 with st.sidebar:
     st.header("Navigation")
     
-    # Role-based navigation
-    if st.session_state["role"] == "admin":
-        page = st.radio("Go to", ["Upload Receipt", "Query Records", "View All Records", "Analytics Dashboard", "Manage Receipts"])
-    else:
-        page = st.radio("Go to", ["Upload Receipt", "Query Records"])
+    page = st.radio("Go to", [
+        "Upload Receipt", 
+        "Query Records", 
+        "View All Records", 
+        "Analytics Dashboard", 
+        "Manage Receipts"
+    ])
     
     st.markdown("---")
     
@@ -173,7 +162,7 @@ with st.sidebar:
         st.metric("Total Spent", f"${df['Total Price'].sum():.2f}")
     
     st.markdown("---")
-    st.info(f"💡 **Tip**: {'As admin, you can view analytics and manage all receipts.' if st.session_state['role'] == 'admin' else 'Upload receipts and query your data.'}")
+    st.info("💡 **Tip**: Upload receipts, query your data, and view analytics.")
 
 # ==================== PAGE 1: UPLOAD RECEIPT ====================
 
@@ -294,7 +283,6 @@ if page == "Upload Receipt":
             with col_date:
                 date_purchase = st.date_input("Date of Purchase", value=pd.to_datetime(items_list[0].get('date', datetime.now())), key="date_input")
             with col_mode:
-                # Feature 6: Editable payment mode with verification
                 mode_options = ['Cash', 'Credit Card', 'Debit Card', 'E-Wallet', 'Other']
                 current_mode = items_list[0].get('mode', 'Other')
                 mode_index = mode_options.index(current_mode) if current_mode in mode_options else 4
@@ -316,12 +304,11 @@ if page == "Upload Receipt":
             for idx, item_data in enumerate(items_list):
                 items_df_data.append({
                     'Item Name': item_data.get('item', ''),
-                    'Quantity': float(item_data.get('unit', 1)),  # Feature 4: Allow decimals
-                    'Unit Price': float(item_data.get('unit_price', 0.0)),  # Feature 5: Allow negative
+                    'Quantity': float(item_data.get('unit', 1)),
+                    'Unit Price': float(item_data.get('unit_price', 0.0)),
                     'Total Price': float(item_data.get('total_price', 0.0))
                 })
             
-            # Feature 4 & 5: Decimal quantities and negative prices for discounts
             edited_df = st.data_editor(
                 pd.DataFrame(items_df_data),
                 num_rows="dynamic",
@@ -333,7 +320,7 @@ if page == "Upload Receipt":
                         "Qty (kg/units)", 
                         min_value=0.001, 
                         step=0.001, 
-                        format="%.3f",  # 3 decimal places for weight
+                        format="%.3f",
                         width="small",
                         help="Enter quantity (supports up to 3 decimal places for weights)"
                     ),
@@ -384,7 +371,7 @@ if page == "Upload Receipt":
                                 'Date of Purchase': date_purchase.strftime('%Y-%m-%d'),
                                 'Item Purchased': row['Item Name'],
                                 'Mode of Purchase': mode,
-                                'Unit Purchased': round(float(row['Quantity']), 3),  # 3 decimals
+                                'Unit Purchased': round(float(row['Quantity']), 3),
                                 'Unit Price': round(float(row['Unit Price']), 2),
                                 'Total Price': round(float(row['Total Price']), 2),
                                 'Image Path': st.session_state.image_path
@@ -403,7 +390,7 @@ if page == "Upload Receipt":
                         
                         final_df.to_csv(csv_path, index=False)
                         
-                        # Save receipt hash (Feature 7: Prevent duplicates)
+                        # Save receipt hash
                         save_receipt_hash(st.session_state.file_hash)
                         
                         # Add to RAG database
@@ -451,7 +438,6 @@ elif page == "Query Records":
     if os.path.exists("data/receipts.csv"):
         df = pd.read_csv("data/receipts.csv")
         
-        # Feature 2: Show unique receipts count, not total rows
         unique_receipts = get_unique_receipts_count()
         total_items = len(df)
         
@@ -483,19 +469,14 @@ elif page == "Query Records":
         else:
             st.warning("No receipts to search. Please upload receipts first.")
 
-# ==================== PAGE 3: VIEW ALL RECORDS (ADMIN ONLY) ====================
+# ==================== PAGE 3: VIEW ALL RECORDS ====================
 
 elif page == "View All Records":
-    if st.session_state["role"] != "admin":
-        st.error("🚫 Access Denied: Admin only")
-        st.stop()
-    
     st.header("📋 All Receipt Records")
     
     if os.path.exists("data/receipts.csv"):
         df = pd.read_csv("data/receipts.csv")
         
-        # Feature 2: Show correct counts
         unique_receipts = get_unique_receipts_count()
         total_items = len(df)
         
@@ -556,19 +537,14 @@ elif page == "View All Records":
     else:
         st.warning("⚠️ No receipts in database yet.")
 
-# ==================== PAGE 4: ANALYTICS DASHBOARD (ADMIN ONLY) ====================
+# ==================== PAGE 4: ANALYTICS DASHBOARD ====================
 
 elif page == "Analytics Dashboard":
-    if st.session_state["role"] != "admin":
-        st.error("🚫 Access Denied: Admin only")
-        st.stop()
-    
     st.header("📊 Analytics Dashboard")
     
     if os.path.exists("data/receipts.csv"):
         df = pd.read_csv("data/receipts.csv")
         
-        # Feature 2: Show correct receipt count
         unique_receipts = get_unique_receipts_count()
         total_items = len(df)
         
@@ -627,13 +603,9 @@ elif page == "Analytics Dashboard":
     else:
         st.warning("⚠️ No receipts in database yet.")
 
-# ==================== PAGE 5: MANAGE RECEIPTS (ADMIN ONLY) ====================
+# ==================== PAGE 5: MANAGE RECEIPTS ====================
 
 elif page == "Manage Receipts":
-    if st.session_state["role"] != "admin":
-        st.error("🚫 Access Denied: Admin only")
-        st.stop()
-    
     st.header("🗑️ Manage Receipts")
     st.warning("⚠️ **Warning:** Deleted receipts cannot be recovered!")
     
