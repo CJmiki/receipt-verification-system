@@ -7,4 +7,5 @@ pytesseract
 chromadb
 plotly
 langchain
+PyPDF2
 langchain-openai
