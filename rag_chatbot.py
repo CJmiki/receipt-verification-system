@@ -109,21 +109,36 @@ class RAGChatbot:
             bool: True if successful, False otherwise
         """
         try:
-            print(f"Loading HR Guidelines from {pdf_path}...")
+            print(f"📖 Loading HR Guidelines from {pdf_path}...")
+            
+            # Check if file exists
+            if not os.path.exists(pdf_path):
+                print(f"❌ File not found: {pdf_path}")
+                return False
             
             # Extract text from PDF
             pdf_text = self._extract_pdf_text(pdf_path)
             
             if not pdf_text or len(pdf_text.strip()) < 100:
-                print("Warning: PDF appears to be empty or very short")
+                print("❌ ERROR: PDF appears to be empty or unreadable")
+                print(f"   Extracted text length: {len(pdf_text)} characters")
+                print(f"   Preview: '{pdf_text[:200]}'")
+                print("\n💡 TROUBLESHOOTING:")
+                print("   1. Check if PDF is text-based (not a scanned image)")
+                print("   2. Try opening the PDF manually to verify content")
+                print("   3. If it's a scanned PDF, you'll need OCR processing")
+                print("   4. Try re-saving the PDF with 'Save As Text' option")
                 return False
+            
+            print(f"✅ Successfully extracted {len(pdf_text)} characters from PDF")
             
             # Split text into chunks for better retrieval
             chunks = self._split_text_into_chunks(pdf_text, chunk_size=1000, overlap=200)
             
-            print(f"Split HR guidelines into {len(chunks)} chunks")
+            print(f"📄 Split HR guidelines into {len(chunks)} chunks")
             
             # Add each chunk to vector database
+            success_count = 0
             for i, chunk in enumerate(chunks):
                 doc_id = f"hr_guideline_chunk_{i}"
                 
@@ -131,7 +146,7 @@ class RAGChatbot:
                 embedding = self._get_embedding(chunk)
                 
                 if embedding is None:
-                    print(f"Failed to generate embedding for chunk {i}")
+                    print(f"⚠️ Failed to generate embedding for chunk {i}")
                     continue
                 
                 # Add to collection
@@ -145,17 +160,24 @@ class RAGChatbot:
                     }],
                     ids=[doc_id]
                 )
+                success_count += 1
+                
+                # Progress indicator
+                if (i + 1) % 5 == 0:
+                    print(f"   Processed {i + 1}/{len(chunks)} chunks...")
             
-            print(f"✅ Successfully loaded {len(chunks)} chunks from HR Guidelines")
-            return True
+            print(f"✅ Successfully loaded {success_count}/{len(chunks)} chunks from HR Guidelines")
+            return success_count > 0
             
         except Exception as e:
-            print(f"Error loading HR guidelines: {e}")
+            print(f"❌ Error loading HR guidelines: {e}")
+            import traceback
+            print(f"   Traceback: {traceback.format_exc()}")
             return False
     
     def _extract_pdf_text(self, pdf_path):
         """
-        Extract text from PDF file
+        Extract text from PDF file with enhanced error handling
         
         Args:
             pdf_path (str): Path to PDF file
@@ -164,14 +186,44 @@ class RAGChatbot:
             str: Extracted text
         """
         try:
+            print(f"📄 Opening PDF: {pdf_path}")
+            print(f"   File size: {os.path.getsize(pdf_path)} bytes")
+            
             text = ""
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
+                num_pages = len(pdf_reader.pages)
+                print(f"   PDF has {num_pages} pages")
+                
+                for i, page in enumerate(pdf_reader.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                            print(f"   ✓ Page {i+1}: Extracted {len(page_text)} characters")
+                        else:
+                            print(f"   ⚠ Page {i+1}: No text found (might be scanned image)")
+                    except Exception as page_error:
+                        print(f"   ✗ Page {i+1}: Error - {page_error}")
+                        continue
+            
+            print(f"   Total text extracted: {len(text)} characters")
+            
+            if len(text.strip()) < 100:
+                print(f"   ⚠️ WARNING: Very little text extracted!")
+                print(f"   This PDF might be:")
+                print(f"      - A scanned document (needs OCR)")
+                print(f"      - Protected/encrypted")
+                print(f"      - Empty or corrupted")
+                print(f"   First 200 chars: {text[:200]}")
+            
             return text
+            
         except Exception as e:
-            print(f"PDF extraction error: {e}")
+            print(f"❌ PDF extraction error: {e}")
+            print(f"   Error type: {type(e).__name__}")
+            import traceback
+            print(f"   Traceback: {traceback.format_exc()}")
             return ""
     
     def _split_text_into_chunks(self, text, chunk_size=1000, overlap=200):
