@@ -27,7 +27,22 @@ class RAGChatbot:
     - HR guidelines knowledge base
     """
     
-    def __init__(self, hr_guidelines_path="HR Guidelines.pdf"):
+    def __init__(self, hr_guidelines_path=None):
+        """Initialize RAG components"""
+        # Auto-detect HR Guidelines PDF location
+        if hr_guidelines_path is None:
+            # Try common locations
+            possible_paths = [
+                "HR Guidelines.pdf",
+                "./HR Guidelines.pdf",
+                "data/HR Guidelines.pdf",
+                "../HR Guidelines.pdf"
+            ]
+            for path in possible_paths:
+                if os.path.exists(path):
+                    hr_guidelines_path = path
+                    print(f"Found HR Guidelines at: {path}")
+                    break
         """Initialize RAG components"""
         try:
             # Initialize OpenAI client
@@ -61,18 +76,23 @@ class RAGChatbot:
             # Get or create collection for HR guidelines
             try:
                 self.hr_collection = self.chroma_client.get_collection(name="hr_guidelines")
-                print(f"Loaded existing HR guidelines collection with {self.hr_collection.count()} sections")
+                print(f"✅ Loaded existing HR guidelines collection with {self.hr_collection.count()} sections")
             except:
                 self.hr_collection = self.chroma_client.create_collection(
                     name="hr_guidelines",
                     metadata={"hnsw:space": "cosine"}
                 )
                 print("Created new HR guidelines collection")
+                
                 # Load HR guidelines if file exists
-                if os.path.exists(hr_guidelines_path):
+                if hr_guidelines_path and os.path.exists(hr_guidelines_path):
+                    print(f"📄 Loading HR Guidelines from: {hr_guidelines_path}")
                     self.load_hr_guidelines(hr_guidelines_path)
                 else:
-                    print(f"Warning: HR Guidelines file not found at {hr_guidelines_path}")
+                    print(f"⚠️ WARNING: HR Guidelines PDF not found!")
+                    print(f"   Searched for: {hr_guidelines_path if hr_guidelines_path else 'No path specified'}")
+                    print(f"   Current directory: {os.getcwd()}")
+                    print(f"   Place 'HR Guidelines.pdf' in the same folder as app.py")
                 
         except Exception as e:
             print(f"RAGChatbot initialization error: {e}")
@@ -722,3 +742,4 @@ if __name__ == "__main__":
     sample_df = pd.DataFrame([sample_receipt])
     result = chatbot.query("Show me office supply purchases", sample_df)
     print(f"Answer: {result['answer']}")
+
