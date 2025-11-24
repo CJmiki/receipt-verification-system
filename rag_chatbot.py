@@ -1,5 +1,5 @@
 """
-RAG Chatbot for Receipt Query System
+RAG Chatbot for Receipt Query System + HR Guidelines
 Uses ChromaDB for vector storage and OpenAI for embeddings and responses
 """
 
@@ -9,21 +9,25 @@ import chromadb
 from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
+import PyPDF2
 
 load_dotenv()
 
 class RAGChatbot:
     """
-    Retrieval-Augmented Generation Chatbot for querying receipt database
+    Retrieval-Augmented Generation Chatbot for:
+    1. Querying receipt database
+    2. Answering HR policy questions (petty cash guidelines)
     
     Features:
     - Semantic search using OpenAI embeddings
     - ChromaDB vector storage
     - Context-aware responses with GPT-4
     - Natural language query interface
+    - HR guidelines knowledge base
     """
     
-    def __init__(self):
+    def __init__(self, hr_guidelines_path="HR Guidelines.pdf"):
         """Initialize RAG components"""
         try:
             # Initialize OpenAI client
@@ -45,18 +49,145 @@ class RAGChatbot:
             
             # Get or create collection for receipts
             try:
-                self.collection = self.chroma_client.get_collection(name="receipts")
-                print(f"Loaded existing collection with {self.collection.count()} receipts")
+                self.receipts_collection = self.chroma_client.get_collection(name="receipts")
+                print(f"Loaded existing receipts collection with {self.receipts_collection.count()} receipts")
             except:
-                self.collection = self.chroma_client.create_collection(
+                self.receipts_collection = self.chroma_client.create_collection(
                     name="receipts",
                     metadata={"hnsw:space": "cosine"}  # Use cosine similarity
                 )
                 print("Created new receipts collection")
+            
+            # Get or create collection for HR guidelines
+            try:
+                self.hr_collection = self.chroma_client.get_collection(name="hr_guidelines")
+                print(f"Loaded existing HR guidelines collection with {self.hr_collection.count()} sections")
+            except:
+                self.hr_collection = self.chroma_client.create_collection(
+                    name="hr_guidelines",
+                    metadata={"hnsw:space": "cosine"}
+                )
+                print("Created new HR guidelines collection")
+                # Load HR guidelines if file exists
+                if os.path.exists(hr_guidelines_path):
+                    self.load_hr_guidelines(hr_guidelines_path)
+                else:
+                    print(f"Warning: HR Guidelines file not found at {hr_guidelines_path}")
                 
         except Exception as e:
             print(f"RAGChatbot initialization error: {e}")
             raise
+    
+    def load_hr_guidelines(self, pdf_path):
+        """
+        Load HR guidelines PDF and add to vector database
+        
+        Args:
+            pdf_path (str): Path to HR Guidelines PDF
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            print(f"Loading HR Guidelines from {pdf_path}...")
+            
+            # Extract text from PDF
+            pdf_text = self._extract_pdf_text(pdf_path)
+            
+            if not pdf_text or len(pdf_text.strip()) < 100:
+                print("Warning: PDF appears to be empty or very short")
+                return False
+            
+            # Split text into chunks for better retrieval
+            chunks = self._split_text_into_chunks(pdf_text, chunk_size=1000, overlap=200)
+            
+            print(f"Split HR guidelines into {len(chunks)} chunks")
+            
+            # Add each chunk to vector database
+            for i, chunk in enumerate(chunks):
+                doc_id = f"hr_guideline_chunk_{i}"
+                
+                # Get embedding
+                embedding = self._get_embedding(chunk)
+                
+                if embedding is None:
+                    print(f"Failed to generate embedding for chunk {i}")
+                    continue
+                
+                # Add to collection
+                self.hr_collection.add(
+                    embeddings=[embedding],
+                    documents=[chunk],
+                    metadatas=[{
+                        "source": "HR Guidelines",
+                        "chunk_id": str(i),
+                        "type": "policy"
+                    }],
+                    ids=[doc_id]
+                )
+            
+            print(f"✅ Successfully loaded {len(chunks)} chunks from HR Guidelines")
+            return True
+            
+        except Exception as e:
+            print(f"Error loading HR guidelines: {e}")
+            return False
+    
+    def _extract_pdf_text(self, pdf_path):
+        """
+        Extract text from PDF file
+        
+        Args:
+            pdf_path (str): Path to PDF file
+        
+        Returns:
+            str: Extracted text
+        """
+        try:
+            text = ""
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+            return text
+        except Exception as e:
+            print(f"PDF extraction error: {e}")
+            return ""
+    
+    def _split_text_into_chunks(self, text, chunk_size=1000, overlap=200):
+        """
+        Split text into overlapping chunks for better retrieval
+        
+        Args:
+            text (str): Text to split
+            chunk_size (int): Maximum characters per chunk
+            overlap (int): Characters to overlap between chunks
+        
+        Returns:
+            list: List of text chunks
+        """
+        chunks = []
+        start = 0
+        text_length = len(text)
+        
+        while start < text_length:
+            end = start + chunk_size
+            
+            # Try to break at sentence boundary
+            if end < text_length:
+                # Look for period, newline, or other sentence endings
+                for i in range(end, max(start, end - 200), -1):
+                    if text[i] in '.!?\n':
+                        end = i + 1
+                        break
+            
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            
+            start = end - overlap
+        
+        return chunks
     
     def add_receipt(self, record):
         """
@@ -101,7 +232,7 @@ Total: ${record.get('Total Price', 0)}
             metadata = {k: str(v) for k, v in record.items()}
             
             # Add to ChromaDB collection
-            self.collection.add(
+            self.receipts_collection.add(
                 embeddings=[embedding],
                 documents=[doc_text],
                 metadatas=[metadata],
@@ -136,44 +267,238 @@ Total: ${record.get('Total Price', 0)}
             print(f"Embedding generation error: {e}")
             return None
     
-    def query(self, question, df):
+    def query(self, question, df=None):
         """
-        Query the receipt database using RAG
+        Query the system using RAG - handles both receipt queries and HR policy questions
         
         Args:
             question (str): Natural language question
-            df (DataFrame): Complete receipts dataframe
+            df (DataFrame): Complete receipts dataframe (optional, for receipt queries)
         
         Returns:
             dict: {
                 'answer': str - Generated answer,
-                'relevant_receipts': DataFrame - Relevant receipts or None
+                'relevant_receipts': DataFrame - Relevant receipts or None,
+                'query_type': str - 'receipts', 'hr_policy', or 'mixed'
             }
         """
         try:
-            # Check if collection has any data
-            collection_count = self.collection.count()
+            # Determine query type based on question content
+            query_type = self._determine_query_type(question)
+            
+            print(f"Query type detected: {query_type}")
+            
+            if query_type == 'hr_policy':
+                return self._query_hr_guidelines(question)
+            elif query_type == 'receipts':
+                return self._query_receipts(question, df)
+            else:  # mixed
+                return self._query_mixed(question, df)
+            
+        except Exception as e:
+            print(f"Query processing error: {e}")
+            return {
+                'answer': f"I encountered an error processing your question. Please try again.",
+                'relevant_receipts': None,
+                'query_type': 'error'
+            }
+    
+    def _determine_query_type(self, question):
+        """
+        Determine if question is about HR policies or receipts
+        
+        Args:
+            question (str): User question
+        
+        Returns:
+            str: 'hr_policy', 'receipts', or 'mixed'
+        """
+        question_lower = question.lower()
+        
+        # HR policy keywords
+        hr_keywords = [
+            'policy', 'policies', 'guideline', 'guidelines', 'petty cash',
+            'reimbursement', 'claim', 'allowable', 'allowed', 'approval',
+            'limit', 'maximum', 'minimum', 'rules', 'regulation', 'procedure',
+            'how to', 'what is allowed', 'can i', 'is it allowed', 'compliance'
+        ]
+        
+        # Receipt query keywords
+        receipt_keywords = [
+            'bought', 'purchased', 'spent', 'total', 'shop', 'store',
+            'last month', 'january', 'february', 'march', 'april',
+            'how much', 'show me', 'find', 'receipts from'
+        ]
+        
+        hr_count = sum(1 for keyword in hr_keywords if keyword in question_lower)
+        receipt_count = sum(1 for keyword in receipt_keywords if keyword in question_lower)
+        
+        if hr_count > 0 and receipt_count == 0:
+            return 'hr_policy'
+        elif receipt_count > 0 and hr_count == 0:
+            return 'receipts'
+        elif hr_count > 0 and receipt_count > 0:
+            return 'mixed'
+        else:
+            # Default to receipts if unclear
+            return 'receipts'
+    
+    def _query_hr_guidelines(self, question):
+        """
+        Query HR guidelines/policies
+        
+        Args:
+            question (str): Policy question
+        
+        Returns:
+            dict: Response with answer
+        """
+        try:
+            collection_count = self.hr_collection.count()
             
             if collection_count == 0:
                 return {
-                    'answer': "The database is empty. Please upload some receipts first.",
-                    'relevant_receipts': None
+                    'answer': "HR guidelines are not loaded. Please ensure the HR Guidelines PDF is available.",
+                    'relevant_receipts': None,
+                    'query_type': 'hr_policy'
                 }
             
-            print(f"Querying {collection_count} receipts...")
+            print(f"Querying {collection_count} HR guideline chunks...")
             
-            # Get embedding for the question
+            # Get embedding for question
             query_embedding = self._get_embedding(question)
             
             if query_embedding is None:
                 return {
-                    'answer': "Sorry, I couldn't process your question. Please try again.",
-                    'relevant_receipts': None
+                    'answer': "Sorry, I couldn't process your question.",
+                    'relevant_receipts': None,
+                    'query_type': 'hr_policy'
                 }
             
-            # Search vector database for similar receipts
-            n_results = min(5, collection_count)  # Get top 5 or all if less
-            results = self.collection.query(
+            # Search HR guidelines
+            n_results = min(3, collection_count)
+            results = self.hr_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results
+            )
+            
+            # Extract relevant context
+            context = ""
+            if results['documents'] and len(results['documents'][0]) > 0:
+                context = "\n\n".join(results['documents'][0])
+                print(f"Found {len(results['documents'][0])} relevant guideline sections")
+            
+            # Generate answer
+            answer = self._generate_hr_answer(question, context)
+            
+            return {
+                'answer': answer,
+                'relevant_receipts': None,
+                'query_type': 'hr_policy'
+            }
+            
+        except Exception as e:
+            print(f"HR query error: {e}")
+            return {
+                'answer': "I encountered an error accessing HR guidelines.",
+                'relevant_receipts': None,
+                'query_type': 'hr_policy'
+            }
+    
+    def _generate_hr_answer(self, question, context):
+        """
+        Generate answer for HR policy questions
+        
+        Args:
+            question (str): User's question
+            context (str): Retrieved policy context
+        
+        Returns:
+            str: Generated answer
+        """
+        try:
+            prompt = f"""
+You are a helpful HR assistant answering questions about company policies, specifically petty cash and reimbursement guidelines.
+
+RELEVANT POLICY SECTIONS:
+{context}
+
+USER QUESTION: {question}
+
+Instructions:
+- Answer based ONLY on the provided policy sections
+- Be clear, concise, and professional
+- If the policy doesn't cover the question, say so honestly
+- Cite specific policy sections when relevant
+- Use bullet points for clarity when listing requirements or rules
+- Be helpful and provide actionable guidance
+"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an HR policy assistant. Provide accurate answers based on company guidelines. Be clear about policy requirements and restrictions."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.2,  # Lower for more factual responses
+                max_tokens=600
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            print(f"HR answer generation error: {e}")
+            return "I'm sorry, I couldn't generate an answer at this time."
+    
+    def _query_receipts(self, question, df):
+        """
+        Query receipt database (original functionality)
+        
+        Args:
+            question (str): Receipt query
+            df (DataFrame): Receipts dataframe
+        
+        Returns:
+            dict: Response with answer and relevant receipts
+        """
+        try:
+            if df is None or len(df) == 0:
+                return {
+                    'answer': "No receipts in database. Please upload some receipts first.",
+                    'relevant_receipts': None,
+                    'query_type': 'receipts'
+                }
+            
+            collection_count = self.receipts_collection.count()
+            
+            if collection_count == 0:
+                return {
+                    'answer': "The receipt database is empty. Please upload some receipts first.",
+                    'relevant_receipts': None,
+                    'query_type': 'receipts'
+                }
+            
+            print(f"Querying {collection_count} receipts...")
+            
+            # Get embedding for question
+            query_embedding = self._get_embedding(question)
+            
+            if query_embedding is None:
+                return {
+                    'answer': "Sorry, I couldn't process your question.",
+                    'relevant_receipts': None,
+                    'query_type': 'receipts'
+                }
+            
+            # Search receipt database
+            n_results = min(5, collection_count)
+            results = self.receipts_collection.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results
             )
@@ -190,7 +515,6 @@ Total: ${record.get('Total Price', 0)}
                 if results['metadatas'] and len(results['metadatas'][0]) > 0:
                     for metadata in results['metadatas'][0]:
                         try:
-                            # Find matching row in dataframe
                             mask = (
                                 (df['Shop Name'].astype(str) == str(metadata.get('Shop Name', ''))) &
                                 (df['Date of Purchase'].astype(str) == str(metadata.get('Date of Purchase', ''))) &
@@ -208,33 +532,27 @@ Total: ${record.get('Total Price', 0)}
             else:
                 relevant_df = pd.DataFrame()
             
-            # Generate answer using GPT with context
+            # Generate answer
             context = "\n\n".join(relevant_docs) if relevant_docs else "No relevant receipts found."
-            answer = self._generate_answer(question, context, df)
+            answer = self._generate_receipt_answer(question, context, df)
             
             return {
                 'answer': answer,
-                'relevant_receipts': relevant_df if not relevant_df.empty else None
+                'relevant_receipts': relevant_df if not relevant_df.empty else None,
+                'query_type': 'receipts'
             }
             
         except Exception as e:
-            print(f"Query processing error: {e}")
+            print(f"Receipt query error: {e}")
             return {
-                'answer': f"I encountered an error processing your question. Please try again or rephrase your query.",
-                'relevant_receipts': None
+                'answer': "I encountered an error querying receipts.",
+                'relevant_receipts': None,
+                'query_type': 'receipts'
             }
     
-    def _generate_answer(self, question, context, df):
+    def _generate_receipt_answer(self, question, context, df):
         """
-        Generate natural language answer using GPT-4
-        
-        Args:
-            question (str): User's question
-            context (str): Retrieved receipt context
-            df (DataFrame): Complete receipts dataframe for statistics
-        
-        Returns:
-            str: Generated answer
+        Generate answer for receipt queries (original method)
         """
         try:
             # Create summary statistics
@@ -251,79 +569,89 @@ Date Range: {date_min} to {date_max}
 Unique Shops: {unique_shops}
 """
             
-            # Create prompt for GPT
             prompt = f"""
-You are a helpful assistant analyzing receipt data for a business expense tracking system.
-Answer the user's question based on the provided context and statistics.
+You are a helpful assistant analyzing receipt data for expense tracking.
 
 DATABASE STATISTICS:
 {stats}
 
-RELEVANT RECEIPTS FROM VECTOR SEARCH:
+RELEVANT RECEIPTS:
 {context}
 
 USER QUESTION: {question}
 
 Instructions:
-- Provide a clear, concise answer based on the data
-- If you mention specific amounts or receipts, reference them naturally
-- If the data doesn't contain information to answer the question, say so politely
-- Be helpful and professional
+- Provide a clear answer based on the data
 - Format currency as $X.XX
-- Use natural language, not technical jargon
+- Be conversational and professional
 """
             
-            # Call GPT-4
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are a helpful receipt analysis assistant. Provide clear, accurate answers based on the data provided. Be conversational and professional."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "You are a receipt analysis assistant."},
+                    {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,  # Lower temperature for more factual responses
+                temperature=0.3,
                 max_tokens=500
             )
             
-            answer = response.choices[0].message.content.strip()
-            return answer
+            return response.choices[0].message.content.strip()
             
         except Exception as e:
             print(f"Answer generation error: {e}")
-            return "I'm sorry, I couldn't generate an answer at this time. Please try again."
+            return "I'm sorry, I couldn't generate an answer."
+    
+    def _query_mixed(self, question, df):
+        """
+        Handle queries that involve both HR policies and receipts
+        
+        Args:
+            question (str): Mixed query
+            df (DataFrame): Receipts dataframe
+        
+        Returns:
+            dict: Combined response
+        """
+        # Query both sources
+        hr_result = self._query_hr_guidelines(question)
+        receipt_result = self._query_receipts(question, df) if df is not None else None
+        
+        # Combine answers
+        combined_answer = f"""
+**Policy Information:**
+{hr_result['answer']}
+
+**Your Receipt Data:**
+{receipt_result['answer'] if receipt_result else 'No receipt data available.'}
+"""
+        
+        return {
+            'answer': combined_answer,
+            'relevant_receipts': receipt_result['relevant_receipts'] if receipt_result else None,
+            'query_type': 'mixed'
+        }
     
     def rebuild_index(self, csv_path="data/receipts.csv"):
         """
-        Rebuild the entire vector database from CSV file
-        Useful after bulk data imports or corruption
-        
-        Args:
-            csv_path (str): Path to receipts CSV file
-        
-        Returns:
-            bool: True if successful, False otherwise
+        Rebuild the receipt vector database from CSV file
         """
         try:
             if not os.path.exists(csv_path):
                 print(f"CSV file not found: {csv_path}")
                 return False
             
-            print("Rebuilding vector index from CSV...")
+            print("Rebuilding receipt index from CSV...")
             
             # Delete existing collection
             try:
                 self.chroma_client.delete_collection(name="receipts")
-                print("Deleted old collection")
+                print("Deleted old receipts collection")
             except:
-                print("No existing collection to delete")
+                print("No existing receipts collection to delete")
             
             # Create new collection
-            self.collection = self.chroma_client.create_collection(
+            self.receipts_collection = self.chroma_client.create_collection(
                 name="receipts",
                 metadata={"hnsw:space": "cosine"}
             )
@@ -332,18 +660,17 @@ Instructions:
             df = pd.read_csv(csv_path)
             print(f"Loaded {len(df)} receipts from CSV")
             
-            # Add each receipt to vector database
+            # Add each receipt
             success_count = 0
             for idx, row in df.iterrows():
                 record = row.to_dict()
                 if self.add_receipt(record):
                     success_count += 1
                 
-                # Progress indicator
                 if (idx + 1) % 10 == 0:
                     print(f"Processed {idx + 1}/{len(df)} receipts...")
             
-            print(f"✅ Rebuilt index with {success_count}/{len(df)} receipts")
+            print(f"✅ Rebuilt receipt index with {success_count}/{len(df)} receipts")
             return True
             
         except Exception as e:
@@ -351,44 +678,47 @@ Instructions:
             return False
     
     def get_stats(self):
-        """
-        Get statistics about the vector database
-        
-        Returns:
-            dict: Statistics including count, etc.
-        """
+        """Get statistics about the vector databases"""
         try:
             return {
-                'total_receipts': self.collection.count(),
-                'collection_name': self.collection.name
+                'total_receipts': self.receipts_collection.count(),
+                'total_hr_chunks': self.hr_collection.count(),
+                'receipts_collection': self.receipts_collection.name,
+                'hr_collection': self.hr_collection.name
             }
         except:
             return {
                 'total_receipts': 0,
-                'collection_name': 'receipts'
+                'total_hr_chunks': 0,
+                'receipts_collection': 'receipts',
+                'hr_collection': 'hr_guidelines'
             }
 
 
 # Example usage
 if __name__ == "__main__":
     # Initialize chatbot
-    chatbot = RAGChatbot()
+    chatbot = RAGChatbot(hr_guidelines_path="HR Guidelines.pdf")
     
-    # Add sample receipt
+    # Test HR policy query
+    print("\n=== HR Policy Query ===")
+    result = chatbot.query("What is the petty cash reimbursement limit?")
+    print(f"Answer: {result['answer']}")
+    
+    # Test receipt query
+    print("\n=== Receipt Query ===")
     sample_receipt = {
-        'Shop Name': 'Walmart',
+        'Shop Name': 'Office Depot',
         'Date of Purchase': '2024-01-15',
-        'Item Purchased': 'Office Supplies',
-        'Mode of Purchase': 'Credit Card',
+        'Item Purchased': 'Stationery',
+        'Mode of Purchase': 'Cash',
         'Unit Purchased': 1,
-        'Unit Price': 45.99,
-        'Total Price': 45.99,
+        'Unit Price': 25.00,
+        'Total Price': 25.00,
         'Image Path': 'test.jpg'
     }
-    
     chatbot.add_receipt(sample_receipt)
     
-    # Query example
     sample_df = pd.DataFrame([sample_receipt])
-    result = chatbot.query("What did I buy at Walmart?", sample_df)
-    print(f"\nAnswer: {result['answer']}")
+    result = chatbot.query("Show me office supply purchases", sample_df)
+    print(f"Answer: {result['answer']}")
