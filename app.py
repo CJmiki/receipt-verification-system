@@ -450,24 +450,48 @@ elif page == "Query Records":
         st.warning("⚠️ No receipts in database yet. Please upload some receipts first.")
         df = None
     
-    # Chat interface
-    query = st.text_input("Ask a question about your receipts:", placeholder="e.g., What were my purchases in January?")
+    # Chat interface with examples
+    st.markdown("**Example Questions:**")
+    col_ex1, col_ex2 = st.columns(2)
+    with col_ex1:
+        st.caption("📋 **Receipt Queries:**")
+        st.caption("• Show me purchases from NTUC")
+        st.caption("• What did I spend last month?")
+        st.caption("• Find receipts above $100")
+    with col_ex2:
+        st.caption("📖 **HR Policy Queries:**")
+        st.caption("• What is the petty cash limit?")
+        st.caption("• Can I claim meal expenses?")
+        st.caption("• What are reimbursement rules?")
+    
+    st.markdown("---")
+    
+    query = st.text_input("Ask a question:", placeholder="e.g., What is the petty cash policy? or Show me my NTUC purchases")
     
     if st.button("🔍 Search", type="primary"):
-        if query and df is not None and len(df) > 0:
+        if query:
             with st.spinner("Searching..."):
-                response = rag_chatbot.query(query, df)
+                # Pass df only if it exists, otherwise None
+                response = rag_chatbot.query(query, df if df is not None else None)
+                
+                # Show query type
+                query_type = response.get('query_type', 'receipts')
+                if query_type == 'hr_policy':
+                    st.info("📖 HR Policy Query")
+                elif query_type == 'receipts':
+                    st.info("🧾 Receipt Query")
+                elif query_type == 'mixed':
+                    st.info("📋 Mixed Query (Receipts + Policy)")
                 
                 st.subheader("📝 Answer")
                 st.write(response['answer'])
                 
+                # Show relevant receipts if available
                 if response.get('relevant_receipts') is not None and len(response['relevant_receipts']) > 0:
                     st.subheader("🧾 Relevant Receipts")
                     st.dataframe(response['relevant_receipts'].drop(columns=['Image Path'], errors='ignore'), use_container_width=True)
-        elif not query:
-            st.warning("Please enter a question.")
         else:
-            st.warning("No receipts to search. Please upload receipts first.")
+            st.warning("Please enter a question.")
 
 # ==================== PAGE 3: VIEW ALL RECORDS ====================
 
