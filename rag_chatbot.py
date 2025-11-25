@@ -1,6 +1,6 @@
 """
 RAG Chatbot for Receipt Query System + HR Guidelines
-Uses ChromaDB for vector storage and OpenAI for embeddings and responses
+Handles PDF loading more reliably
 """
 
 import os
@@ -18,31 +18,9 @@ class RAGChatbot:
     Retrieval-Augmented Generation Chatbot for:
     1. Querying receipt database
     2. Answering HR policy questions (petty cash guidelines)
-    
-    Features:
-    - Semantic search using OpenAI embeddings
-    - ChromaDB vector storage
-    - Context-aware responses with GPT-4
-    - Natural language query interface
-    - HR guidelines knowledge base
     """
     
     def __init__(self, hr_guidelines_path=None):
-        """Initialize RAG components"""
-        # Auto-detect HR Guidelines PDF location
-        if hr_guidelines_path is None:
-            # Try common locations
-            possible_paths = [
-                "HR Guidelines.pdf",
-                "./HR Guidelines.pdf",
-                "data/HR Guidelines.pdf",
-                "../HR Guidelines.pdf"
-            ]
-            for path in possible_paths:
-                if os.path.exists(path):
-                    hr_guidelines_path = path
-                    print(f"Found HR Guidelines at: {path}")
-                    break
         """Initialize RAG components"""
         try:
             # Initialize OpenAI client
@@ -52,143 +30,175 @@ class RAGChatbot:
             
             self.client = OpenAI(api_key=api_key)
             
-            # Initialize ChromaDB with error handling
+            # Initialize ChromaDB
             try:
-                # Try persistent client first
                 self.chroma_client = chromadb.PersistentClient(path="./data/chroma_db")
+                print("✅ ChromaDB persistent client initialized")
             except Exception as e:
                 print(f"Warning: ChromaDB persistent client failed: {e}")
-                print("Falling back to in-memory client...")
-                # Fallback to in-memory client
                 self.chroma_client = chromadb.Client()
+                print("✅ Using in-memory ChromaDB client")
             
             # Get or create collection for receipts
             try:
                 self.receipts_collection = self.chroma_client.get_collection(name="receipts")
-                print(f"Loaded existing receipts collection with {self.receipts_collection.count()} receipts")
+                print(f"✅ Loaded existing receipts collection with {self.receipts_collection.count()} receipts")
             except:
                 self.receipts_collection = self.chroma_client.create_collection(
                     name="receipts",
-                    metadata={"hnsw:space": "cosine"}  # Use cosine similarity
-                )
-                print("Created new receipts collection")
-            
-            # Get or create collection for HR guidelines
-            try:
-                self.hr_collection = self.chroma_client.get_collection(name="hr_guidelines")
-                print(f"✅ Loaded existing HR guidelines collection with {self.hr_collection.count()} sections")
-            except:
-                self.hr_collection = self.chroma_client.create_collection(
-                    name="hr_guidelines",
                     metadata={"hnsw:space": "cosine"}
                 )
-                print("Created new HR guidelines collection")
-                
-                # Load HR guidelines if file exists
-                if hr_guidelines_path and os.path.exists(hr_guidelines_path):
-                    print(f"📄 Loading HR Guidelines from: {hr_guidelines_path}")
-                    self.load_hr_guidelines(hr_guidelines_path)
-                else:
-                    print(f"⚠️ WARNING: HR Guidelines PDF not found!")
-                    print(f"   Searched for: {hr_guidelines_path if hr_guidelines_path else 'No path specified'}")
-                    print(f"   Current directory: {os.getcwd()}")
-                    print(f"   Place 'HR Guidelines.pdf' in the same folder as app.py")
+                print("✅ Created new receipts collection")
+            
+            # Handle HR guidelines collection
+            self._initialize_hr_collection(hr_guidelines_path)
                 
         except Exception as e:
             print(f"RAGChatbot initialization error: {e}")
             raise
     
-    def load_hr_guidelines(self, pdf_path):
-        """
-        Load HR guidelines PDF and add to vector database
-        
-        Args:
-            pdf_path (str): Path to HR Guidelines PDF
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
+    def _initialize_hr_collection(self, hr_guidelines_path):
+        """Initialize HR collection and load PDF if needed"""
         try:
-            print(f"📖 Loading HR Guidelines from {pdf_path}...")
+            # Try to get existing collection
+            self.hr_collection = self.chroma_client.get_collection(name="hr_guidelines")
+            existing_count = self.hr_collection.count()
             
-            # Check if file exists
+            if existing_count > 0:
+                print(f"✅ Loaded existing HR guidelines collection with {existing_count} sections")
+                return
+            else:
+                print("⚠️ HR guidelines collection exists but is empty, will reload...")
+                # Delete and recreate
+                self.chroma_client.delete_collection(name="hr_guidelines")
+                raise Exception("Empty collection")
+                
+        except:
+            # Create new collection
+            self.hr_collection = self.chroma_client.create_collection(
+                name="hr_guidelines",
+                metadata={"hnsw:space": "cosine"}
+            )
+            print("✅ Created new HR guidelines collection")
+            
+            # Auto-detect PDF location
+            if hr_guidelines_path is None:
+                possible_paths = [
+                    "HR Guidelines.pdf",
+                    "./HR Guidelines.pdf",
+                    "data/HR Guidelines.pdf",
+                    "../HR Guidelines.pdf",
+                    "pages/HR Guidelines.pdf"
+                ]
+                
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        hr_guidelines_path = path
+                        print(f"📄 Found HR Guidelines at: {path}")
+                        break
+            
+            # Load PDF if found
+            if hr_guidelines_path and os.path.exists(hr_guidelines_path):
+                print(f"📖 Loading HR Guidelines from: {hr_guidelines_path}")
+                success = self.load_hr_guidelines(hr_guidelines_path)
+                if success:
+                    print(f"✅ Successfully loaded HR Guidelines!")
+                else:
+                    print(f"⚠️ Failed to load HR Guidelines")
+            else:
+                print(f"⚠️ HR Guidelines PDF not found!")
+                print(f"   Searched in: {', '.join(possible_paths)}")
+                print(f"   Current directory: {os.getcwd()}")
+                print(f"   📌 Place 'HR Guidelines.pdf' in the project root folder")
+    
+    def load_hr_guidelines(self, pdf_path):
+        """Load HR guidelines PDF and add to vector database"""
+        try:
             if not os.path.exists(pdf_path):
                 print(f"❌ File not found: {pdf_path}")
                 return False
             
-            # Extract text from PDF
+            print(f"📖 Extracting text from PDF...")
             pdf_text = self._extract_pdf_text(pdf_path)
             
             if not pdf_text or len(pdf_text.strip()) < 100:
-                print("❌ ERROR: PDF appears to be empty or unreadable")
-                print(f"   Extracted text length: {len(pdf_text)} characters")
-                print(f"   Preview: '{pdf_text[:200]}'")
-                print("\n💡 TROUBLESHOOTING:")
-                print("   1. Check if PDF is text-based (not a scanned image)")
-                print("   2. Try opening the PDF manually to verify content")
-                print("   3. If it's a scanned PDF, you'll need OCR processing")
-                print("   4. Try re-saving the PDF with 'Save As Text' option")
-                return False
+                print(f"❌ PDF appears empty or unreadable")
+                print(f"   Extracted only {len(pdf_text)} characters")
+                
+                # Try alternative extraction method
+                print("🔄 Trying alternative extraction method...")
+                pdf_text = self._extract_pdf_text_alternative(pdf_path)
+                
+                if not pdf_text or len(pdf_text.strip()) < 100:
+                    print("❌ Alternative method also failed")
+                    return False
             
-            print(f"✅ Successfully extracted {len(pdf_text)} characters from PDF")
+            print(f"✅ Extracted {len(pdf_text)} characters from PDF")
             
-            # Split text into chunks for better retrieval
+            # Split into chunks
             chunks = self._split_text_into_chunks(pdf_text, chunk_size=1000, overlap=200)
+            print(f"📄 Split into {len(chunks)} chunks")
             
-            print(f"📄 Split HR guidelines into {len(chunks)} chunks")
+            if len(chunks) == 0:
+                print("❌ No chunks created from PDF")
+                return False
             
             # Add each chunk to vector database
             success_count = 0
+            failed_count = 0
+            
             for i, chunk in enumerate(chunks):
-                doc_id = f"hr_guideline_chunk_{i}"
-                
-                # Get embedding
-                embedding = self._get_embedding(chunk)
-                
-                if embedding is None:
-                    print(f"⚠️ Failed to generate embedding for chunk {i}")
+                if len(chunk.strip()) < 50:  # Skip very short chunks
                     continue
                 
-                # Add to collection
-                self.hr_collection.add(
-                    embeddings=[embedding],
-                    documents=[chunk],
-                    metadatas=[{
-                        "source": "HR Guidelines",
-                        "chunk_id": str(i),
-                        "type": "policy"
-                    }],
-                    ids=[doc_id]
-                )
-                success_count += 1
+                doc_id = f"hr_guideline_chunk_{i}"
                 
-                # Progress indicator
-                if (i + 1) % 5 == 0:
-                    print(f"   Processed {i + 1}/{len(chunks)} chunks...")
+                try:
+                    # Get embedding
+                    embedding = self._get_embedding(chunk)
+                    
+                    if embedding is None:
+                        failed_count += 1
+                        continue
+                    
+                    # Add to collection
+                    self.hr_collection.add(
+                        embeddings=[embedding],
+                        documents=[chunk],
+                        metadatas=[{
+                            "source": "HR Guidelines",
+                            "chunk_id": str(i),
+                            "type": "policy"
+                        }],
+                        ids=[doc_id]
+                    )
+                    success_count += 1
+                    
+                    # Progress indicator every 5 chunks
+                    if (i + 1) % 5 == 0:
+                        print(f"   Processed {i + 1}/{len(chunks)} chunks...")
+                        
+                except Exception as e:
+                    print(f"   ⚠️ Failed to process chunk {i}: {e}")
+                    failed_count += 1
             
-            print(f"✅ Successfully loaded {success_count}/{len(chunks)} chunks from HR Guidelines")
-            return success_count > 0
+            if success_count > 0:
+                print(f"✅ Successfully loaded {success_count}/{len(chunks)} chunks")
+                print(f"   Failed: {failed_count}")
+                return True
+            else:
+                print(f"❌ Failed to load any chunks")
+                return False
             
         except Exception as e:
             print(f"❌ Error loading HR guidelines: {e}")
             import traceback
-            print(f"   Traceback: {traceback.format_exc()}")
+            traceback.print_exc()
             return False
     
     def _extract_pdf_text(self, pdf_path):
-        """
-        Extract text from PDF file with enhanced error handling
-        
-        Args:
-            pdf_path (str): Path to PDF file
-        
-        Returns:
-            str: Extracted text
-        """
+        """Extract text from PDF using PyPDF2"""
         try:
-            print(f"📄 Opening PDF: {pdf_path}")
-            print(f"   File size: {os.path.getsize(pdf_path)} bytes")
-            
             text = ""
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
@@ -200,44 +210,41 @@ class RAGChatbot:
                         page_text = page.extract_text()
                         if page_text:
                             text += page_text + "\n"
-                            print(f"   ✓ Page {i+1}: Extracted {len(page_text)} characters")
-                        else:
-                            print(f"   ⚠ Page {i+1}: No text found (might be scanned image)")
-                    except Exception as page_error:
-                        print(f"   ✗ Page {i+1}: Error - {page_error}")
+                    except Exception as e:
+                        print(f"   ⚠️ Page {i+1} extraction failed: {e}")
                         continue
             
-            print(f"   Total text extracted: {len(text)} characters")
-            
-            if len(text.strip()) < 100:
-                print(f"   ⚠️ WARNING: Very little text extracted!")
-                print(f"   This PDF might be:")
-                print(f"      - A scanned document (needs OCR)")
-                print(f"      - Protected/encrypted")
-                print(f"      - Empty or corrupted")
-                print(f"   First 200 chars: {text[:200]}")
-            
-            return text
+            return text.strip()
             
         except Exception as e:
             print(f"❌ PDF extraction error: {e}")
-            print(f"   Error type: {type(e).__name__}")
-            import traceback
-            print(f"   Traceback: {traceback.format_exc()}")
+            return ""
+    
+    def _extract_pdf_text_alternative(self, pdf_path):
+        """Alternative PDF extraction method"""
+        try:
+            import io
+            text = ""
+            
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
+                
+                for page_num in range(len(pdf_reader.pages)):
+                    page = pdf_reader.pages[page_num]
+                    try:
+                        # Try different extraction methods
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n\n"
+                    except:
+                        continue
+            
+            return text.strip()
+        except:
             return ""
     
     def _split_text_into_chunks(self, text, chunk_size=1000, overlap=200):
-        """
-        Split text into overlapping chunks for better retrieval
-        
-        Args:
-            text (str): Text to split
-            chunk_size (int): Maximum characters per chunk
-            overlap (int): Characters to overlap between chunks
-        
-        Returns:
-            list: List of text chunks
-        """
+        """Split text into overlapping chunks"""
         chunks = []
         start = 0
         text_length = len(text)
@@ -247,37 +254,33 @@ class RAGChatbot:
             
             # Try to break at sentence boundary
             if end < text_length:
-                # Look for period, newline, or other sentence endings
                 for i in range(end, max(start, end - 200), -1):
                     if text[i] in '.!?\n':
                         end = i + 1
                         break
             
             chunk = text[start:end].strip()
-            if chunk:
+            if chunk and len(chunk) > 50:  # Only add substantial chunks
                 chunks.append(chunk)
             
             start = end - overlap
         
         return chunks
     
+    def _get_embedding(self, text):
+        """Generate embedding vector using OpenAI"""
+        try:
+            response = self.client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            print(f"Embedding error: {e}")
+            return None
+    
     def add_receipt(self, record):
-        """
-        Add a receipt record to the vector database
-        
-        Args:
-            record (dict): Receipt data with keys:
-                - Shop Name
-                - Date of Purchase
-                - Item Purchased
-                - Mode of Purchase
-                - Unit Purchased
-                - Unit Price
-                - Total Price
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Add a receipt record to the vector database"""
         try:
             # Create document text for embedding
             doc_text = f"""
@@ -290,20 +293,14 @@ Unit Price: ${record.get('Unit Price', 0)}
 Total: ${record.get('Total Price', 0)}
 """
             
-            # Generate unique ID with timestamp
             doc_id = f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-            
-            # Get embedding from OpenAI
             embedding = self._get_embedding(doc_text)
             
             if embedding is None:
-                print("Failed to generate embedding")
                 return False
             
-            # Convert all metadata values to strings (ChromaDB requirement)
             metadata = {k: str(v) for k, v in record.items()}
             
-            # Add to ChromaDB collection
             self.receipts_collection.add(
                 embeddings=[embedding],
                 documents=[doc_text],
@@ -311,99 +308,50 @@ Total: ${record.get('Total Price', 0)}
                 ids=[doc_id]
             )
             
-            print(f"✅ Added receipt: {record.get('Shop Name', 'Unknown')} - ${record.get('Total Price', 0)}")
             return True
             
         except Exception as e:
-            print(f"Error adding receipt to vector DB: {e}")
+            print(f"Error adding receipt: {e}")
             return False
     
-    def _get_embedding(self, text):
-        """
-        Generate embedding vector for text using OpenAI
-        
-        Args:
-            text (str): Text to embed
-        
-        Returns:
-            list: Embedding vector or None if failed
-        """
-        try:
-            response = self.client.embeddings.create(
-                model="text-embedding-3-small",  # 1536 dimensions
-                input=text
-            )
-            return response.data[0].embedding
-            
-        except Exception as e:
-            print(f"Embedding generation error: {e}")
-            return None
-    
     def query(self, question, df=None):
-        """
-        Query the system using RAG - handles both receipt queries and HR policy questions
-        
-        Args:
-            question (str): Natural language question
-            df (DataFrame): Complete receipts dataframe (optional, for receipt queries)
-        
-        Returns:
-            dict: {
-                'answer': str - Generated answer,
-                'relevant_receipts': DataFrame - Relevant receipts or None,
-                'query_type': str - 'receipts', 'hr_policy', or 'mixed'
-            }
-        """
+        """Query the system using RAG"""
         try:
-            # Determine query type based on question content
             query_type = self._determine_query_type(question)
-            
-            print(f"Query type detected: {query_type}")
             
             if query_type == 'hr_policy':
                 return self._query_hr_guidelines(question)
             elif query_type == 'receipts':
                 return self._query_receipts(question, df)
-            else:  # mixed
+            else:
                 return self._query_mixed(question, df)
             
         except Exception as e:
-            print(f"Query processing error: {e}")
+            print(f"Query error: {e}")
             return {
-                'answer': f"I encountered an error processing your question. Please try again.",
+                'answer': f"Error processing query: {str(e)}",
                 'relevant_receipts': None,
                 'query_type': 'error'
             }
     
     def _determine_query_type(self, question):
-        """
-        Determine if question is about HR policies or receipts
-        
-        Args:
-            question (str): User question
-        
-        Returns:
-            str: 'hr_policy', 'receipts', or 'mixed'
-        """
+        """Determine query type"""
         question_lower = question.lower()
         
-        # HR policy keywords
         hr_keywords = [
             'policy', 'policies', 'guideline', 'guidelines', 'petty cash',
             'reimbursement', 'claim', 'allowable', 'allowed', 'approval',
             'limit', 'maximum', 'minimum', 'rules', 'regulation', 'procedure',
-            'how to', 'what is allowed', 'can i', 'is it allowed', 'compliance'
+            'how to', 'what is allowed', 'can i', 'is it allowed'
         ]
         
-        # Receipt query keywords
         receipt_keywords = [
             'bought', 'purchased', 'spent', 'total', 'shop', 'store',
-            'last month', 'january', 'february', 'march', 'april',
-            'how much', 'show me', 'find', 'receipts from'
+            'last month', 'show me', 'find', 'receipts'
         ]
         
-        hr_count = sum(1 for keyword in hr_keywords if keyword in question_lower)
-        receipt_count = sum(1 for keyword in receipt_keywords if keyword in question_lower)
+        hr_count = sum(1 for kw in hr_keywords if kw in question_lower)
+        receipt_count = sum(1 for kw in receipt_keywords if kw in question_lower)
         
         if hr_count > 0 and receipt_count == 0:
             return 'hr_policy'
@@ -412,34 +360,21 @@ Total: ${record.get('Total Price', 0)}
         elif hr_count > 0 and receipt_count > 0:
             return 'mixed'
         else:
-            # Default to receipts if unclear
             return 'receipts'
     
     def _query_hr_guidelines(self, question):
-        """
-        Query HR guidelines/policies
-        
-        Args:
-            question (str): Policy question
-        
-        Returns:
-            dict: Response with answer
-        """
+        """Query HR guidelines"""
         try:
             collection_count = self.hr_collection.count()
             
             if collection_count == 0:
                 return {
-                    'answer': "HR guidelines are not loaded. Please ensure the HR Guidelines PDF is available.",
+                    'answer': "❌ HR guidelines are not loaded. Please ensure the HR Guidelines PDF is in the project folder and restart the application.",
                     'relevant_receipts': None,
                     'query_type': 'hr_policy'
                 }
             
-            print(f"Querying {collection_count} HR guideline chunks...")
-            
-            # Get embedding for question
             query_embedding = self._get_embedding(question)
-            
             if query_embedding is None:
                 return {
                     'answer': "Sorry, I couldn't process your question.",
@@ -447,20 +382,16 @@ Total: ${record.get('Total Price', 0)}
                     'query_type': 'hr_policy'
                 }
             
-            # Search HR guidelines
             n_results = min(3, collection_count)
             results = self.hr_collection.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results
             )
             
-            # Extract relevant context
             context = ""
             if results['documents'] and len(results['documents'][0]) > 0:
                 context = "\n\n".join(results['documents'][0])
-                print(f"Found {len(results['documents'][0])} relevant guideline sections")
             
-            # Generate answer
             answer = self._generate_hr_answer(question, context)
             
             return {
@@ -472,25 +403,18 @@ Total: ${record.get('Total Price', 0)}
         except Exception as e:
             print(f"HR query error: {e}")
             return {
-                'answer': "I encountered an error accessing HR guidelines.",
+                'answer': f"Error querying HR guidelines: {str(e)}",
                 'relevant_receipts': None,
                 'query_type': 'hr_policy'
             }
     
     def _generate_hr_answer(self, question, context):
-        """
-        Generate answer for HR policy questions
-        
-        Args:
-            question (str): User's question
-            context (str): Retrieved policy context
-        
-        Returns:
-            str: Generated answer
-        """
+        """Generate answer for HR policy questions"""
         try:
-            prompt = f"""
-You are a helpful HR assistant answering questions about company policies, specifically petty cash and reimbursement guidelines.
+            if not context or len(context.strip()) < 10:
+                return "I couldn't find relevant information in the HR guidelines for your question. Please try rephrasing or ask about specific policies like petty cash limits or reimbursement procedures."
+            
+            prompt = f"""You are a helpful HR assistant answering questions about company policies.
 
 RELEVANT POLICY SECTIONS:
 {context}
@@ -501,44 +425,27 @@ Instructions:
 - Answer based ONLY on the provided policy sections
 - Be clear, concise, and professional
 - If the policy doesn't cover the question, say so honestly
-- Cite specific policy sections when relevant
-- Use bullet points for clarity when listing requirements or rules
-- Be helpful and provide actionable guidance
+- Use bullet points for clarity when listing requirements
 """
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an HR policy assistant. Provide accurate answers based on company guidelines. Be clear about policy requirements and restrictions."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "You are an HR policy assistant."},
+                    {"role": "user", "content": prompt}
                 ],
-                temperature=0.2,  # Lower for more factual responses
+                temperature=0.2,
                 max_tokens=600
             )
             
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            print(f"HR answer generation error: {e}")
-            return "I'm sorry, I couldn't generate an answer at this time."
+            print(f"Answer generation error: {e}")
+            return "I'm sorry, I couldn't generate an answer."
     
     def _query_receipts(self, question, df):
-        """
-        Query receipt database (original functionality)
-        
-        Args:
-            question (str): Receipt query
-            df (DataFrame): Receipts dataframe
-        
-        Returns:
-            dict: Response with answer and relevant receipts
-        """
+        """Query receipt database"""
         try:
             if df is None or len(df) == 0:
                 return {
@@ -548,19 +455,14 @@ Instructions:
                 }
             
             collection_count = self.receipts_collection.count()
-            
             if collection_count == 0:
                 return {
-                    'answer': "The receipt database is empty. Please upload some receipts first.",
+                    'answer': "Receipt database is empty. Please upload receipts first.",
                     'relevant_receipts': None,
                     'query_type': 'receipts'
                 }
             
-            print(f"Querying {collection_count} receipts...")
-            
-            # Get embedding for question
             query_embedding = self._get_embedding(question)
-            
             if query_embedding is None:
                 return {
                     'answer': "Sorry, I couldn't process your question.",
@@ -568,22 +470,18 @@ Instructions:
                     'query_type': 'receipts'
                 }
             
-            # Search receipt database
             n_results = min(5, collection_count)
             results = self.receipts_collection.query(
                 query_embeddings=[query_embedding],
                 n_results=n_results
             )
             
-            # Extract relevant documents and metadata
             relevant_docs = []
             relevant_indices = []
             
             if results['documents'] and len(results['documents'][0]) > 0:
                 relevant_docs = results['documents'][0]
-                print(f"Found {len(relevant_docs)} relevant receipts")
                 
-                # Match metadata to dataframe rows
                 if results['metadatas'] and len(results['metadatas'][0]) > 0:
                     for metadata in results['metadatas'][0]:
                         try:
@@ -594,17 +492,10 @@ Instructions:
                             )
                             matching_indices = df[mask].index.tolist()
                             relevant_indices.extend(matching_indices)
-                        except Exception as e:
-                            print(f"Error matching metadata: {e}")
+                        except:
                             continue
             
-            # Create relevant receipts dataframe
-            if relevant_indices:
-                relevant_df = df.iloc[relevant_indices].drop_duplicates()
-            else:
-                relevant_df = pd.DataFrame()
-            
-            # Generate answer
+            relevant_df = df.iloc[relevant_indices].drop_duplicates() if relevant_indices else pd.DataFrame()
             context = "\n\n".join(relevant_docs) if relevant_docs else "No relevant receipts found."
             answer = self._generate_receipt_answer(question, context, df)
             
@@ -617,46 +508,29 @@ Instructions:
         except Exception as e:
             print(f"Receipt query error: {e}")
             return {
-                'answer': "I encountered an error querying receipts.",
+                'answer': f"Error querying receipts: {str(e)}",
                 'relevant_receipts': None,
                 'query_type': 'receipts'
             }
     
     def _generate_receipt_answer(self, question, context, df):
-        """
-        Generate answer for receipt queries (original method)
-        """
+        """Generate answer for receipt queries"""
         try:
-            # Create summary statistics
             total_receipts = len(df)
             total_spending = df['Total Price'].sum()
-            date_min = df['Date of Purchase'].min()
-            date_max = df['Date of Purchase'].max()
-            unique_shops = df['Shop Name'].nunique()
             
-            stats = f"""
-Total Receipts: {total_receipts}
-Total Spending: ${total_spending:.2f}
-Date Range: {date_min} to {date_max}
-Unique Shops: {unique_shops}
-"""
+            stats = f"Total Receipts: {total_receipts}, Total Spending: ${total_spending:.2f}"
             
-            prompt = f"""
-You are a helpful assistant analyzing receipt data for expense tracking.
+            prompt = f"""You are a helpful assistant analyzing receipt data.
 
-DATABASE STATISTICS:
-{stats}
+DATABASE STATISTICS: {stats}
 
 RELEVANT RECEIPTS:
 {context}
 
 USER QUESTION: {question}
 
-Instructions:
-- Provide a clear answer based on the data
-- Format currency as $X.XX
-- Be conversational and professional
-"""
+Provide a clear answer based on the data."""
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -675,28 +549,15 @@ Instructions:
             return "I'm sorry, I couldn't generate an answer."
     
     def _query_mixed(self, question, df):
-        """
-        Handle queries that involve both HR policies and receipts
-        
-        Args:
-            question (str): Mixed query
-            df (DataFrame): Receipts dataframe
-        
-        Returns:
-            dict: Combined response
-        """
-        # Query both sources
+        """Handle mixed queries"""
         hr_result = self._query_hr_guidelines(question)
         receipt_result = self._query_receipts(question, df) if df is not None else None
         
-        # Combine answers
-        combined_answer = f"""
-**Policy Information:**
+        combined_answer = f"""**Policy Information:**
 {hr_result['answer']}
 
 **Your Receipt Data:**
-{receipt_result['answer'] if receipt_result else 'No receipt data available.'}
-"""
+{receipt_result['answer'] if receipt_result else 'No receipt data available.'}"""
         
         return {
             'answer': combined_answer,
@@ -704,94 +565,26 @@ Instructions:
             'query_type': 'mixed'
         }
     
-    def rebuild_index(self, csv_path="data/receipts.csv"):
-        """
-        Rebuild the receipt vector database from CSV file
-        """
-        try:
-            if not os.path.exists(csv_path):
-                print(f"CSV file not found: {csv_path}")
-                return False
-            
-            print("Rebuilding receipt index from CSV...")
-            
-            # Delete existing collection
-            try:
-                self.chroma_client.delete_collection(name="receipts")
-                print("Deleted old receipts collection")
-            except:
-                print("No existing receipts collection to delete")
-            
-            # Create new collection
-            self.receipts_collection = self.chroma_client.create_collection(
-                name="receipts",
-                metadata={"hnsw:space": "cosine"}
-            )
-            
-            # Load CSV
-            df = pd.read_csv(csv_path)
-            print(f"Loaded {len(df)} receipts from CSV")
-            
-            # Add each receipt
-            success_count = 0
-            for idx, row in df.iterrows():
-                record = row.to_dict()
-                if self.add_receipt(record):
-                    success_count += 1
-                
-                if (idx + 1) % 10 == 0:
-                    print(f"Processed {idx + 1}/{len(df)} receipts...")
-            
-            print(f"✅ Rebuilt receipt index with {success_count}/{len(df)} receipts")
-            return True
-            
-        except Exception as e:
-            print(f"Rebuild error: {e}")
-            return False
-    
     def get_stats(self):
-        """Get statistics about the vector databases"""
+        """Get statistics"""
         try:
             return {
                 'total_receipts': self.receipts_collection.count(),
-                'total_hr_chunks': self.hr_collection.count(),
-                'receipts_collection': self.receipts_collection.name,
-                'hr_collection': self.hr_collection.name
+                'total_hr_chunks': self.hr_collection.count()
             }
         except:
-            return {
-                'total_receipts': 0,
-                'total_hr_chunks': 0,
-                'receipts_collection': 'receipts',
-                'hr_collection': 'hr_guidelines'
-            }
+            return {'total_receipts': 0, 'total_hr_chunks': 0}
 
 
-# Example usage
+# Test function
 if __name__ == "__main__":
-    # Initialize chatbot
+    print("Testing RAG Chatbot...")
     chatbot = RAGChatbot(hr_guidelines_path="HR Guidelines.pdf")
+    stats = chatbot.get_stats()
+    print(f"\n📊 Stats: {stats}")
     
-    # Test HR policy query
-    print("\n=== HR Policy Query ===")
-    result = chatbot.query("What is the petty cash reimbursement limit?")
-    print(f"Answer: {result['answer']}")
-    
-    # Test receipt query
-    print("\n=== Receipt Query ===")
-    sample_receipt = {
-        'Shop Name': 'Office Depot',
-        'Date of Purchase': '2024-01-15',
-        'Item Purchased': 'Stationery',
-        'Mode of Purchase': 'Cash',
-        'Unit Purchased': 1,
-        'Unit Price': 25.00,
-        'Total Price': 25.00,
-        'Image Path': 'test.jpg'
-    }
-    chatbot.add_receipt(sample_receipt)
-    
-    sample_df = pd.DataFrame([sample_receipt])
-    result = chatbot.query("Show me office supply purchases", sample_df)
-    print(f"Answer: {result['answer']}")
+    if stats['total_hr_chunks'] > 0:
+        print("\n✅ HR Guidelines loaded successfully!")
+    else:
+        print("\n❌ HR Guidelines not loaded")
 
