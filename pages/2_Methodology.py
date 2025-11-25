@@ -23,37 +23,44 @@ natural language processing, and vector databases to create an intelligent expen
 # Architecture Diagram using Mermaid
 st.subheader("🏗️ High-Level Architecture")
 
-st.markdown("""
-```mermaid
-graph TB
-    A[User Interface<br/>Streamlit] --> B[Application Layer<br/>app.py]
-    B --> C[OCR Processor<br/>ocr_processor.py]
-    B --> D[RAG Chatbot<br/>rag_chatbot.py]
-    B --> E[Analytics Engine<br/>analytics.py]
-    
-    C --> F[Tesseract OCR]
-    C --> G[OpenAI GPT-4]
-    
-    D --> H[ChromaDB<br/>Vector Store]
-    D --> I[OpenAI Embeddings]
-    D --> G
-    
-    E --> J[Plotly Visualizations]
-    
-    B --> K[(CSV Storage<br/>receipts.csv)]
-    D --> K
-    D --> L[(PDF Storage<br/>HR Guidelines)]
-    
-    style A fill:#e1f5ff
-    style B fill:#fff4e1
-    style C fill:#ffe1e1
-    style D fill:#e1ffe1
-    style E fill:#f0e1ff
-    style H fill:#ffe1f0
-    style K fill:#fff0d4
-    style L fill:#fff0d4
-```
-""")
+st.code("""
+┌─────────────────────────────────────────────────────────────────┐
+│                      USER INTERFACE LAYER                       │
+│                      (Streamlit Web App)                        │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     APPLICATION LAYER                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│  │ OCR Processor│  │  RAG Chatbot │  │  Analytics   │        │
+│  │              │  │              │  │   Engine     │        │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘        │
+└─────────┼──────────────────┼──────────────────┼────────────────┘
+          │                  │                  │
+          ▼                  ▼                  ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│  Tesseract   │   │   ChromaDB   │   │    Plotly    │
+│     OCR      │   │ Vector Store │   │  Viz Library │
+└──────┬───────┘   └──────┬───────┘   └──────────────┘
+       │                  │
+       │                  │
+       ▼                  ▼
+┌──────────────────────────────────┐
+│       OpenAI API Services        │
+│  - GPT-4o-mini (parsing/chat)   │
+│  - text-embedding-3-small        │
+└──────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────┐
+│        DATA STORAGE LAYER        │
+│  - receipts.csv                  │
+│  - HR Guidelines.pdf             │
+│  - ChromaDB vectors              │
+│  - Uploaded images               │
+└──────────────────────────────────┘
+""", language="text")
 
 st.markdown("---")
 
@@ -140,78 +147,39 @@ This flowchart illustrates the complete process flow from receipt upload to data
 including OCR processing, AI parsing, user verification, and database storage.
 """)
 
-# Flowchart for Use Case 1
 st.subheader("🔄 Process Flow Diagram")
 
+st.image("https://via.placeholder.com/1200x800/e1f5ff/000000?text=FLOWCHART+1:+Receipt+Upload+%26+Verification", 
+         caption="Flowchart 1: Receipt Upload & Verification Process", 
+         use_container_width=True)
+
 st.markdown("""
-```mermaid
-flowchart TD
-    Start([User Accesses<br/>Upload Page]) --> Upload{Upload<br/>Receipt Image?}
-    Upload -->|No| Wait[Wait for Upload]
-    Wait --> Upload
-    Upload -->|Yes| Receive[Receive Image File<br/>PNG/JPG/JPEG]
-    
-    Receive --> Hash[Generate SHA256<br/>File Hash]
-    Hash --> CheckDup{Duplicate<br/>Receipt?}
-    
-    CheckDup -->|Yes| Error1[❌ Display Error:<br/>Duplicate Receipt]
-    Error1 --> End1([End])
-    
-    CheckDup -->|No| SaveImg[Save Image to<br/>data/uploads/]
-    SaveImg --> OCR[🔍 Tesseract OCR<br/>Extract Text]
-    
-    OCR --> CheckText{Sufficient<br/>Text Extracted?}
-    CheckText -->|No| Error2[❌ Display Error:<br/>Invalid Image]
-    Error2 --> End2([End])
-    
-    CheckText -->|Yes| GPT[🤖 GPT-4o-mini<br/>Parse & Structure Data]
-    GPT --> Validate{Valid<br/>Receipt?}
-    
-    Validate -->|No| Error3[❌ Display Error:<br/>Not a Receipt]
-    Error3 --> End3([End])
-    
-    Validate -->|Yes| Extract[✅ Extract Structured Data:<br/>Shop, Date, Items, Prices]
-    Extract --> Display[📋 Display Editable<br/>Data Table]
-    
-    Display --> UserEdit{User<br/>Edits Data?}
-    UserEdit -->|Yes| Edit[User Modifies:<br/>Shop, Items, Quantities]
-    Edit --> Display
-    
-    UserEdit -->|No| UserSave{User Clicks<br/>Save?}
-    UserSave -->|No| WaitSave[Wait for Action]
-    WaitSave --> UserEdit
-    
-    UserSave -->|Yes| ValidateData{Data<br/>Valid?}
-    ValidateData -->|No| ShowError[Show Validation<br/>Error]
-    ShowError --> Display
-    
-    ValidateData -->|Yes| SaveCSV[💾 Save to<br/>receipts.csv]
-    SaveCSV --> Embed[🧠 Generate OpenAI<br/>Embedding]
-    Embed --> ChromaDB[📦 Store in ChromaDB<br/>Vector Database]
-    ChromaDB --> SaveHash[💾 Save Hash to<br/>Prevent Duplicates]
-    SaveHash --> Success[✅ Success Message<br/>& Balloons]
-    Success --> Clear[Clear Session State]
-    Clear --> End4([End:<br/>Ready for Next Upload])
-    
-    style Start fill:#e1f5ff
-    style Success fill:#d4edda
-    style Error1 fill:#f8d7da
-    style Error2 fill:#f8d7da
-    style Error3 fill:#f8d7da
-    style OCR fill:#fff4e1
-    style GPT fill:#ffe1e1
-    style Embed fill:#e1ffe1
-    style ChromaDB fill:#f0e1ff
-```
+**Process Steps:**
+
+1. **User Upload**: User accesses upload page and selects receipt image
+2. **Duplicate Check**: System generates SHA256 hash and checks for duplicates
+3. **Image Storage**: Save image to data/uploads/ directory
+4. **OCR Processing**: Tesseract extracts text from image
+5. **Text Validation**: Check if sufficient text was extracted
+6. **GPT Parsing**: GPT-4o-mini structures the extracted text
+7. **Receipt Validation**: AI determines if image is a valid receipt
+8. **Data Extraction**: Extract shop, date, items, prices, payment method
+9. **User Verification**: Display editable data table for user review
+10. **Data Validation**: Validate required fields and formats
+11. **CSV Storage**: Save to receipts.csv
+12. **Embedding Generation**: Create vector embedding with OpenAI
+13. **Vector Storage**: Store in ChromaDB for semantic search
+14. **Hash Recording**: Save file hash to prevent future duplicates
+15. **Success Confirmation**: Display success message and clear form
 """)
 
 st.info("""
 **Key Decision Points:**
-1. **Duplicate Detection**: SHA256 hash comparison prevents duplicate uploads
-2. **Text Extraction Quality**: Ensures sufficient OCR output for parsing
-3. **Receipt Validation**: GPT-4 determines if image is a valid receipt
-4. **Data Validation**: Checks for empty fields before saving
-5. **User Verification**: Allows manual editing before final storage
+- **Duplicate Detection**: SHA256 hash comparison prevents duplicate uploads
+- **Text Extraction Quality**: Ensures sufficient OCR output for parsing
+- **Receipt Validation**: GPT-4 determines if image is a valid receipt
+- **Data Validation**: Checks for empty fields before saving
+- **User Verification**: Allows manual editing before final storage
 """)
 
 st.markdown("---")
@@ -224,90 +192,51 @@ This flowchart demonstrates the Retrieval-Augmented Generation (RAG) pipeline, s
 queries are processed through semantic search and AI-powered response generation.
 """)
 
-# Flowchart for Use Case 2
 st.subheader("🔄 Process Flow Diagram")
 
+st.image("https://via.placeholder.com/1200x800/e1ffe1/000000?text=FLOWCHART+2:+RAG+Chatbot+Query+System", 
+         caption="Flowchart 2: RAG Chatbot Query System", 
+         use_container_width=True)
+
 st.markdown("""
-```mermaid
-flowchart TD
-    Start([User Accesses<br/>Query Page]) --> Input[User Enters<br/>Natural Language Query]
-    Input --> Click{User Clicks<br/>Search?}
-    Click -->|No| Wait[Wait for Input]
-    Wait --> Input
-    
-    Click -->|Yes| Classify[🔍 Query Type<br/>Classification]
-    Classify --> CheckType{Query<br/>Type?}
-    
-    CheckType -->|HR Policy| HRPath[HR Policy Path]
-    CheckType -->|Receipts| ReceiptPath[Receipt Query Path]
-    CheckType -->|Mixed| MixedPath[Mixed Query Path]
-    
-    %% HR Policy Path
-    HRPath --> HRCheck{HR Guidelines<br/>Loaded?}
-    HRCheck -->|No| HRError[❌ Error: Guidelines<br/>Not Available]
-    HRError --> End1([End])
-    
-    HRCheck -->|Yes| HREmbed[🧠 Generate Query<br/>Embedding]
-    HREmbed --> HRSearch[🔍 ChromaDB Search<br/>HR Collection<br/>Top 3 Results]
-    HRSearch --> HRContext[📄 Extract Policy<br/>Context]
-    HRContext --> HRGPT[🤖 GPT-4 Response<br/>with Policy Context]
-    HRGPT --> HRDisplay[📋 Display Answer<br/>Policy Info]
-    HRDisplay --> End2([End])
-    
-    %% Receipt Query Path
-    ReceiptPath --> DBCheck{Receipt DB<br/>Empty?}
-    DBCheck -->|Yes| DBError[❌ Error: No<br/>Receipts Found]
-    DBError --> End3([End])
-    
-    DBCheck -->|No| REmbed[🧠 Generate Query<br/>Embedding]
-    REmbed --> RSearch[🔍 ChromaDB Search<br/>Receipt Collection<br/>Top 5 Results]
-    RSearch --> RContext[📄 Extract Receipt<br/>Context + Metadata]
-    RContext --> RMatch[🔗 Match to CSV<br/>Dataframe Rows]
-    RMatch --> RGPT[🤖 GPT-4 Response<br/>with Receipt Context]
-    RGPT --> RDisplay[📋 Display Answer<br/>+ Receipt Table]
-    RDisplay --> End4([End])
-    
-    %% Mixed Query Path
-    MixedPath --> MEmbed1[🧠 Generate Query<br/>Embedding]
-    MEmbed1 --> Parallel{Process Both<br/>Sources}
-    
-    Parallel --> MHRSearch[🔍 Search HR<br/>Guidelines]
-    Parallel --> MRSearch[🔍 Search Receipt<br/>Database]
-    
-    MHRSearch --> MHRContext[📄 HR Context]
-    MRSearch --> MRContext[📄 Receipt Context]
-    
-    MHRContext --> Combine[🔄 Combine Contexts]
-    MRContext --> Combine
-    
-    Combine --> MGPT[🤖 GPT-4 Combined<br/>Response]
-    MGPT --> MDisplay[📋 Display Policy Info<br/>+ Receipt Data]
-    MDisplay --> End5([End])
-    
-    style Start fill:#e1f5ff
-    style Classify fill:#fff4e1
-    style HREmbed fill:#ffe1e1
-    style REmbed fill:#ffe1e1
-    style HRSearch fill:#f0e1ff
-    style RSearch fill:#f0e1ff
-    style HRGPT fill:#e1ffe1
-    style RGPT fill:#e1ffe1
-    style MGPT fill:#e1ffe1
-    style HRDisplay fill:#d4edda
-    style RDisplay fill:#d4edda
-    style MDisplay fill:#d4edda
-    style HRError fill:#f8d7da
-    style DBError fill:#f8d7da
-```
+**Process Steps:**
+
+1. **User Input**: User enters natural language query
+2. **Query Classification**: System determines query type (HR policy / receipts / mixed)
+
+**For HR Policy Queries:**
+3. Check if HR Guidelines are loaded
+4. Generate query embedding
+5. Search HR collection in ChromaDB (top 3 results)
+6. Extract policy context from retrieved chunks
+7. GPT-4 generates answer with policy citations
+8. Display policy information
+
+**For Receipt Queries:**
+3. Check if receipt database has data
+4. Generate query embedding
+5. Search receipt collection in ChromaDB (top 5 results)
+6. Extract receipt context and metadata
+7. Match metadata to CSV dataframe rows
+8. GPT-4 generates answer with receipt context
+9. Display answer with relevant receipt table
+
+**For Mixed Queries:**
+3. Generate query embedding
+4. Search both HR and receipt collections in parallel
+5. Extract context from both sources
+6. Combine contexts
+7. GPT-4 generates comprehensive answer
+8. Display policy info + receipt data
 """)
 
 st.info("""
 **Key Decision Points:**
-1. **Query Classification**: Determines if query is about HR policies, receipts, or both
-2. **Database Availability**: Checks if required data sources are loaded
-3. **Semantic Search**: Uses cosine similarity on embeddings for relevant document retrieval
-4. **Context Assembly**: Combines retrieved documents with metadata for GPT-4
-5. **Response Generation**: Creates natural language answer with citations
+- **Query Classification**: Determines if query is about HR policies, receipts, or both
+- **Database Availability**: Checks if required data sources are loaded
+- **Semantic Search**: Uses cosine similarity on embeddings for relevant document retrieval
+- **Context Assembly**: Combines retrieved documents with metadata for GPT-4
+- **Response Generation**: Creates natural language answer with citations
 """)
 
 st.markdown("---")
@@ -315,7 +244,6 @@ st.markdown("---")
 # Implementation Details
 st.header("🛠️ Implementation Details")
 
-# Tab structure for detailed explanations
 tab1, tab2, tab3, tab4 = st.tabs(["OCR Processing", "RAG Pipeline", "Analytics Engine", "Data Storage"])
 
 with tab1:
@@ -429,27 +357,6 @@ with tab2:
         - Retrieval accuracy: ~92%
         - Response quality: High (context-aware)
         """)
-    
-    st.markdown("""
-    **Prompt Engineering Strategy:**
-    
-    ```python
-    prompt = f"""
-    You are a helpful assistant analyzing receipt data.
-    
-    RELEVANT CONTEXT:
-    {retrieved_context}
-    
-    USER QUESTION: {user_query}
-    
-    Instructions:
-    - Answer based on provided context
-    - Be concise and accurate
-    - Format numbers as currency
-    - Cite specific receipts when relevant
-    """
-    ```
-    """)
 
 with tab3:
     st.subheader("📊 Analytics Engine Implementation")
@@ -483,43 +390,6 @@ with tab3:
     - Unique shops: `df['Shop Name'].nunique()`
     - Date range: `df['Date of Purchase'].min()` to `.max()`
     """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **Data Transformations:**
-        
-        1. **Aggregation**
-           - Group by shop, date, category
-           - Sum, count, average calculations
-        
-        2. **Time Series Processing**
-           - Date parsing to datetime
-           - Cumulative sum calculations
-           - Month/week extraction
-        
-        3. **Category Mapping**
-           - Keyword matching algorithm
-           - Default "Other" category
-           - Case-insensitive matching
-        """)
-    
-    with col2:
-        st.markdown("""
-        **Interactive Features:**
-        
-        - **Hover Information**: Detailed data on hover
-        - **Zoom & Pan**: Interactive chart exploration
-        - **Filtering**: Date, shop, payment mode filters
-        - **Export**: CSV download capability
-        - **Responsive**: Adjusts to screen size
-        
-        **Performance Optimization:**
-        - Caching with `@st.cache_data`
-        - Efficient pandas operations
-        - Plotly GPU acceleration
-        """)
 
 with tab4:
     st.subheader("💾 Data Storage Implementation")
@@ -606,7 +476,7 @@ with col3:
 
 st.markdown("---")
 
-# Error Handling & Edge Cases
+# Error Handling
 st.header("🛡️ Error Handling & Edge Cases")
 
 col1, col2 = st.columns(2)
@@ -656,71 +526,6 @@ with col2:
 
 st.markdown("---")
 
-# Future Enhancements
-st.header("🚀 Potential Enhancements")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("""
-    **Technical:**
-    - Multi-user authentication
-    - PostgreSQL database
-    - Redis caching layer
-    - Celery task queue
-    - API endpoints (REST)
-    - Webhook integrations
-    """)
-
-with col2:
-    st.markdown("""
-    **Features:**
-    - Bulk upload (ZIP files)
-    - Email notifications
-    - Budget alerts
-    - Approval workflows
-    - Mobile app (iOS/Android)
-    - Receipt image preprocessing
-    """)
-
-with col3:
-    st.markdown("""
-    **AI/ML:**
-    - Custom fine-tuned models
-    - Fraud detection ML
-    - Anomaly detection
-    - Predictive analytics
-    - Multi-language support
-    - Voice input queries
-    """)
-
-st.markdown("---")
-
-# References
-st.header("📚 References & Resources")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("""
-    **Documentation:**
-    - [Streamlit Docs](https://docs.streamlit.io/)
-    - [OpenAI API Reference](https://platform.openai.com/docs/api-reference)
-    - [ChromaDB Documentation](https://docs.trychroma.com/)
-    - [Tesseract OCR Guide](https://github.com/tesseract-ocr/tesseract)
-    - [Plotly Python](https://plotly.com/python/)
-    """)
-
-with col2:
-    st.markdown("""
-    **Research Papers:**
-    - RAG: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
-    - Embeddings: "Text Embeddings by Weakly-Supervised Contrastive Pre-training"
-    - Vector Search: "Efficient and robust approximate nearest neighbor search"
-    """)
-
-st.markdown("---")
-
 # Footer
 st.markdown("""
 <div style='text-align: center; padding: 20px; color: #666;'>
@@ -728,3 +533,4 @@ st.markdown("""
     <p>For implementation questions, refer to source code documentation</p>
 </div>
 """, unsafe_allow_html=True)
+
